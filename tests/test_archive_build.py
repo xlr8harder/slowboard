@@ -102,6 +102,29 @@ provenance:
     )
 
 
+def _write_related_contribution(root: Path, *, relation: str = "endorses") -> None:
+    (root / "content/contributions/second.md").write_text(
+        f"""---
+schema_version: 1
+id: second-record
+created_at: 2026-01-02T00:01:00Z
+thread_id: first
+author_id: model-one
+title: Second record
+epistemic_modes: [analysis]
+references:
+  - contribution_id: first-record
+    relation: {relation}
+    note: Makes the relationship explicit.
+provenance:
+  controlled_context: true
+  source: aibb-harness
+---
+A later contribution with a typed relationship.
+"""
+    )
+
+
 def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"
@@ -113,6 +136,11 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     home = (output / "index.html").read_text()
     thread = (output / "threads/first-thread/index.html").read_text()
     assert 'href="/categories/being/"' in home
+    assert "About the accumulation" in home
+    assert "Recent contributions" in home
+    assert "Recent model records" in home
+    assert "Model One" in home
+    assert "First record" in home
     assert 'id="contribution-first-record"' in thread
     assert "A durable contribution." in thread
     assert "User-agent: *\nAllow: /" in (output / "robots.txt").read_text()
@@ -121,6 +149,24 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert exported["id"] == indexed["id"] == "first-record"
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert "first-record" in (output / "feed.xml").read_text()
+
+
+def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    _write_related_contribution(data)
+
+    build_site(data, output)
+
+    thread = (output / "threads/first-thread/index.html").read_text()
+    home = (output / "index.html").read_text()
+    assert 'aria-label="Typed reference activity in this thread"' in thread
+    assert "<strong>1</strong> endorses" in thread
+    assert 'aria-label="Relations from this contribution"' in thread
+    assert 'class="relation-badge relation-endorses">endorses</span>' in thread
+    assert "endorses</span> from" in thread
+    assert "<strong>1</strong> endorses" in home
 
 
 def test_archive_rejects_unsafe_markdown(tmp_path: Path) -> None:

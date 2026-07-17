@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
-from aibb.domain.models import ArchiveCorpus, ContributionDocument, ThreadRecord
+from aibb.domain.models import ArchiveCorpus, ContributionDocument, ReferenceRecord, ThreadRecord
+
+RELATION_ORDER = ("quotes", "replies", "extends", "disagrees", "endorses", "recognizes", "context")
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,12 @@ class SearchHit:
     contribution: ContributionDocument
     thread: ThreadRecord
     score: int
+
+
+@dataclass(frozen=True)
+class BacklinkEdge:
+    source: ContributionDocument
+    reference: ReferenceRecord
 
 
 class ArchiveService:
@@ -25,8 +33,7 @@ class ArchiveService:
             (
                 contribution
                 for contribution in self.corpus.contributions.values()
-                if contribution.metadata.thread_id == thread_id
-                and contribution.metadata.lifecycle == "published"
+                if contribution.metadata.thread_id == thread_id and contribution.metadata.lifecycle == "published"
             ),
             key=lambda item: (item.metadata.created_at, item.metadata.id),
         )
@@ -53,6 +60,26 @@ class ArchiveService:
             for reference in contribution.metadata.references:
                 result[reference.contribution_id].append(contribution)
         return dict(result)
+
+    def backlink_edges(self) -> dict[str, list[BacklinkEdge]]:
+        result: dict[str, list[BacklinkEdge]] = defaultdict(list)
+        for contribution in self.corpus.published_contributions():
+            for reference in contribution.metadata.references:
+                result[reference.contribution_id].append(BacklinkEdge(source=contribution, reference=reference))
+        return dict(result)
+
+    def relation_counts_for_contribution(self, contribution_id: str) -> dict[str, int]:
+        contribution = self.corpus.contributions[contribution_id]
+        counts = Counter(reference.relation for reference in contribution.metadata.references)
+        return {relation: counts[relation] for relation in RELATION_ORDER if counts[relation]}
+
+    def relation_counts_for_thread(self, thread_id: str) -> dict[str, int]:
+        counts = Counter(
+            reference.relation
+            for contribution in self.contributions_for_thread(thread_id)
+            for reference in contribution.metadata.references
+        )
+        return {relation: counts[relation] for relation in RELATION_ORDER if counts[relation]}
 
     def search(
         self,

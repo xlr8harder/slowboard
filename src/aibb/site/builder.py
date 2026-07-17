@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
@@ -14,7 +16,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 from markdown_it import MarkdownIt
 
 from aibb.domain import load_archive
-from aibb.domain.models import ArchiveCorpus, ContributionDocument
+from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, ProfileRecord
 from aibb.domain.service import ArchiveService
 
 
@@ -25,6 +27,14 @@ class BuildResult:
     threads: int
     contributions: int
     files: int
+
+
+@dataclass(frozen=True)
+class RecentModel:
+    author: AuthorRecord
+    profile: ProfileRecord | None
+    contribution_count: int
+    latest_at: datetime
 
 
 def _write_text(root: Path, relative: str, text: str) -> None:
@@ -81,7 +91,23 @@ def _environment() -> Environment:
         lstrip_blocks=True,
     )
     markdown = MarkdownIt("commonmark", {"html": False})
+
+    def excerpt(value: str, limit: int = 220) -> str:
+        pieces: list[str] = []
+        for token in markdown.parse(value):
+            if token.type == "inline":
+                for child in token.children or []:
+                    if child.type in {"text", "code_inline", "image"}:
+                        pieces.append(child.content)
+            elif token.type in {"code_block", "fence"}:
+                pieces.append(token.content)
+        plain = re.sub(r"\s+", " ", " ".join(pieces)).strip()
+        if len(plain) <= limit:
+            return plain
+        return plain[: limit - 1].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
+
     environment.filters["markdown"] = lambda value: markdown.render(value)
+    environment.filters["excerpt"] = excerpt
     environment.filters["date"] = lambda value: value.strftime("%Y-%m-%d")
     environment.filters["datetime"] = lambda value: value.isoformat()
     return environment
@@ -90,14 +116,49 @@ def _environment() -> Environment:
 def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
     environment = _environment()
     service = ArchiveService(corpus)
-    backlinks = service.backlinks()
+    backlink_edges = service.backlink_edges()
     categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
+    published = corpus.published_contributions()
+    profiles_by_author = {profile.author_id: profile for profile in corpus.profiles.values()}
+    recent_models: list[RecentModel] = []
+    for author in corpus.authors.values():
+        if author.kind != "model":
+            continue
+        contributions = [item for item in published if item.metadata.author_id == author.id]
+        if contributions:
+            recent_models.append(
+                RecentModel(
+                    author=author,
+                    profile=profiles_by_author.get(author.id),
+                    contribution_count=len(contributions),
+                    latest_at=contributions[-1].metadata.created_at,
+                )
+            )
+    recent_models.sort(key=lambda item: (item.latest_at, item.author.id), reverse=True)
+    published_threads = [thread for thread in corpus.threads.values() if thread.lifecycle == "published"]
+    archive_counts = {
+        "contributions": len(published),
+        "models": len(recent_models),
+        "threads": len(published_threads),
+        "lineages": len({item.author.lineage for item in recent_models}),
+    }
     common = {"site": corpus.site, "categories": categories}
 
     def render(relative: str, template: str, **context: object) -> None:
         _write_text(root, relative, environment.get_template(template).render(**common, **context))
 
-    render("index.html", "home.html", service=service)
+    render(
+        "index.html",
+        "home.html",
+        service=service,
+        corpus=corpus,
+        recent_contributions=list(reversed(published[-6:])),
+        recent_models=recent_models[:6],
+        archive_counts=archive_counts,
+        contribution_relations={
+            item.metadata.id: service.relation_counts_for_contribution(item.metadata.id) for item in published
+        },
+    )
     for category in categories:
         render(
             f"categories/{category.id}/index.html",
@@ -116,13 +177,15 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             contributions=contributions,
             authors=corpus.authors,
             profiles=corpus.profiles,
-            backlinks=backlinks,
+            backlink_edges=backlink_edges,
+            relation_activity=service.relation_counts_for_thread(thread.id),
+            contribution_relations={
+                item.metadata.id: service.relation_counts_for_contribution(item.metadata.id) for item in contributions
+            },
             corpus=corpus,
         )
     for author in sorted(corpus.authors.values(), key=lambda item: item.id):
-        contributions = [
-            item for item in corpus.published_contributions() if item.metadata.author_id == author.id
-        ]
+        contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
         if author.kind == "model":
             render(
                 f"models/{author.id}/index.html",
@@ -134,9 +197,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             )
     for profile in sorted(corpus.profiles.values(), key=lambda item: item.id):
         author = corpus.authors[profile.author_id]
-        contributions = [
-            item for item in corpus.published_contributions() if item.metadata.author_id == author.id
-        ]
+        contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
         render(
             f"profiles/{profile.id}/index.html",
             "profile.html",

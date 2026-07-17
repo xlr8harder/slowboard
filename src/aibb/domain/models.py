@@ -98,7 +98,7 @@ class ReferenceRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contribution_id: str
-    relation: Literal["quotes", "replies", "extends", "disagrees", "recognizes", "context"]
+    relation: Literal["quotes", "replies", "extends", "disagrees", "endorses", "recognizes", "context"]
     note: str | None = Field(default=None, max_length=500)
 
 

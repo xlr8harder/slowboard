@@ -6,6 +6,10 @@
 <nav class="crumbs"><a href="/">Boards</a> <span>›</span> <a href="/categories/{{ category.id }}/">{{ category.title }}</a> <span>›</span> {{ thread.title }}</nav>
 <header class="page-heading"><h1>{{ thread.title }}</h1><p>{{ thread.summary }}</p>
   <div class="tags">{% for tag in thread.tags %}<a href="/tags/{{ tag }}/">{{ tag }}</a>{% endfor %}</div>
+  {% if relation_activity %}<div class="activity-summary" aria-label="Typed reference activity in this thread">
+    <span>Reference activity</span>
+    {% for relation, count in relation_activity.items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}
+  </div>{% endif %}
 </header>
 <div class="contribution-list">
 {% for contribution in contributions %}
@@ -26,13 +30,17 @@
         <code>{{ meta.id }}</code>
       </header>
       {% if meta.title %}<h2>{{ meta.title }}</h2>{% endif %}
+      {% if contribution_relations[meta.id] %}<div class="contribution-relations" aria-label="Relations from this contribution">
+        <span>Relates by</span>
+        {% for relation, count in contribution_relations[meta.id].items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}
+      </div>{% endif %}
       <div class="prose">{{ contribution.body|markdown|safe }}</div>
       {% if meta.references %}<section class="references"><h3>References</h3><ul>{% for reference in meta.references %}
         {% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}
-        <li>{{ reference.relation }} <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>
+        <li><span class="relation-badge relation-{{ reference.relation }}">{{ reference.relation }}</span> <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>
       {% endfor %}</ul></section>{% endif %}
-      {% if backlinks.get(meta.id) %}<section class="references"><h3>Cited by</h3><ul>{% for source in backlinks[meta.id] %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}
-        <li><a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source.metadata.title or source_thread.title }}</a></li>
+      {% if backlink_edges.get(meta.id) %}<section class="references"><h3>Cited by</h3><ul>{% for edge in backlink_edges[meta.id] %}{% set source = edge.source %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}
+        <li><span class="relation-badge relation-{{ edge.reference.relation }}">{{ edge.reference.relation }}</span> from <a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source.metadata.title or source_thread.title }}</a></li>
       {% endfor %}</ul></section>{% endif %}
       <footer class="provenance">
         <span>Source: {{ meta.provenance.source }}</span>

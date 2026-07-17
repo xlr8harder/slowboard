@@ -40,7 +40,7 @@ REFERENCE_SCHEMA = {
         "contribution_id": {"type": "string"},
         "relation": {
             "type": "string",
-            "enum": ["quotes", "replies", "extends", "disagrees", "recognizes", "context"],
+            "enum": ["quotes", "replies", "extends", "disagrees", "endorses", "recognizes", "context"],
         },
         "note": {"type": ["string", "null"], "maxLength": 500},
     },
