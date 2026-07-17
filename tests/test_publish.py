@@ -68,6 +68,10 @@ def test_prepare_and_check_publication_are_revision_bound_and_deterministic(tmp_
     assert checked["status"] == "valid"
     assert checked["files"] > 10
 
+    _git(site, "switch", "--detach")
+    assert check_publication(code_repo=code, data_repo=data, site_repo=site)["status"] == "valid"
+    _git(site, "switch", "main")
+
     (site / "index.html").write_text("tampered\n")
     with pytest.raises(PublicationError, match="not the deterministic build"):
         check_publication(code_repo=code, data_repo=data, site_repo=site)

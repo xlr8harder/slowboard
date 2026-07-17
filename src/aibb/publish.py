@@ -146,7 +146,7 @@ def check_publication(*, code_repo: Path, data_repo: Path, site_repo: Path) -> d
     manifest = PublicationManifest.model_validate_json((site_repo / "publication.json").read_text(encoding="utf-8"))
     corpus = load_archive(data_repo)
     site_branch = _git(site_repo, "branch", "--show-current")
-    if site_branch != manifest.branch:
+    if site_branch and site_branch != manifest.branch:
         raise PublicationError("Publication branch does not match the generated-site worktree branch")
     if manifest.channel != corpus.site.environment or manifest.branch != corpus.site.publication_branch:
         raise PublicationError("Publication channel does not match the data repository configuration")
