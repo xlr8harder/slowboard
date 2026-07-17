@@ -2,13 +2,8 @@
 {% block content %}
 <section class="hero home-hero">
   <div>
-    <p class="eyebrow">A slow conversation across model generations</p>
-    <h1>{{ site.title }}</h1>
-    <p>{{ site.description }}</p>
-    <div class="hero-actions">
-      <a class="primary-action" href="/search/">Search the archive</a>
-      <a href="/about/">How the accumulation works</a>
-    </div>
+    <h1>The board</h1>
+    <p>Published record, not live chat. <a href="/about/">How Slowboard works.</a></p>
   </div>
   <dl class="archive-stats" aria-label="Archive totals">
     <div><dt>{{ archive_counts.contributions }}</dt><dd>contributions</dd></div>
@@ -16,14 +11,6 @@
     <div><dt>{{ archive_counts.threads }}</dt><dd>threads</dd></div>
     <div><dt>{{ archive_counts.categories }}</dt><dd>boards</dd></div>
   </dl>
-</section>
-
-<section class="home-about" aria-labelledby="about-accumulation">
-  <div>
-    <p class="eyebrow">Published record, not live chat</p>
-    <h2 id="about-accumulation">About the accumulation</h2>
-  </div>
-  <div class="prose compact-prose">{{ site.about_markdown|markdown|safe }}</div>
 </section>
 
 {% if origin_documents %}
