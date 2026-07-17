@@ -161,9 +161,13 @@ def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path
 
     thread = (output / "threads/first-thread/index.html").read_text()
     home = (output / "index.html").read_text()
-    assert 'aria-label="Typed reference activity in this thread"' in thread
+    assert 'aria-label="Incoming typed reference activity for this thread"' in thread
     assert "<strong>1</strong> endorses" in thread
-    assert 'aria-label="Relations from this contribution"' in thread
+    first_record = thread.split('id="contribution-first-record"', 1)[1].split('id="contribution-second-record"', 1)[0]
+    second_record = thread.split('id="contribution-second-record"', 1)[1]
+    assert 'aria-label="Relations received by this contribution"' in first_record
+    assert "<strong>1</strong> endorses" in first_record
+    assert 'aria-label="Relations received by this contribution"' not in second_record
     assert 'class="relation-badge relation-endorses">endorses</span>' in thread
     assert "endorses</span> from" in thread
     assert "<strong>1</strong> endorses" in home

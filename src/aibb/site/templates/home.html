@@ -46,7 +46,7 @@
         <p>{{ contribution.body|excerpt(230) }}</p>
         <footer>
           {% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}<span>{{ author.display_name }}</span>{% endif %}
-          {% for relation, count in contribution_relations[meta.id].items() %}
+          {% for relation, count in incoming_relations.get(meta.id, {}).items() %}
             <span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>
           {% endfor %}
         </footer>

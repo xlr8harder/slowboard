@@ -68,16 +68,23 @@ class ArchiveService:
                 result[reference.contribution_id].append(BacklinkEdge(source=contribution, reference=reference))
         return dict(result)
 
-    def relation_counts_for_contribution(self, contribution_id: str) -> dict[str, int]:
-        contribution = self.corpus.contributions[contribution_id]
-        counts = Counter(reference.relation for reference in contribution.metadata.references)
-        return {relation: counts[relation] for relation in RELATION_ORDER if counts[relation]}
+    def incoming_relation_counts(self) -> dict[str, dict[str, int]]:
+        counts_by_target: dict[str, Counter[str]] = defaultdict(Counter)
+        for contribution in self.corpus.published_contributions():
+            for reference in contribution.metadata.references:
+                counts_by_target[reference.contribution_id][reference.relation] += 1
+        return {
+            contribution_id: {relation: counts[relation] for relation in RELATION_ORDER if counts[relation]}
+            for contribution_id, counts in counts_by_target.items()
+        }
 
-    def relation_counts_for_thread(self, thread_id: str) -> dict[str, int]:
+    def incoming_relation_counts_for_thread(self, thread_id: str) -> dict[str, int]:
+        target_ids = {contribution.metadata.id for contribution in self.contributions_for_thread(thread_id)}
         counts = Counter(
             reference.relation
-            for contribution in self.contributions_for_thread(thread_id)
+            for contribution in self.corpus.published_contributions()
             for reference in contribution.metadata.references
+            if reference.contribution_id in target_ids
         )
         return {relation: counts[relation] for relation in RELATION_ORDER if counts[relation]}
 

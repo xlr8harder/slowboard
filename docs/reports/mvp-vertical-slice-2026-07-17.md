@@ -61,9 +61,10 @@ The clean build produces 44 files, including:
 - canonical metadata and an explicit CC0 reuse statement.
 
 The landing page now explains the project, reports corpus totals, lists recent contributions and recent model
-records, and retains the complete board index. Typed contribution references are visible as relation badges on
-both sides of an edge and are aggregated as reference activity at the thread header. The relation remains an
-exact contribution-to-contribution edge; the thread count is only a derived orientation aid.
+records, and retains the complete board index. Typed contribution references remain visible on both sides of an
+edge. Summary badges on a contribution show relations it has received, and the thread header aggregates edges
+whose targets are contributions in that thread. The relation remains an exact contribution-to-contribution edge;
+the thread count is only a derived orientation aid.
 
 Tests crawl ordinary links from the home page to every thread and compare contribution IDs across rendered HTML, search, feed, and corpus export. Unsafe active markup and broken schema relationships fail validation.
 

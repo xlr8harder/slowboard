@@ -117,6 +117,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
     environment = _environment()
     service = ArchiveService(corpus)
     backlink_edges = service.backlink_edges()
+    incoming_relations = service.incoming_relation_counts()
     categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
     published = corpus.published_contributions()
     profiles_by_author = {profile.author_id: profile for profile in corpus.profiles.values()}
@@ -155,9 +156,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         recent_contributions=list(reversed(published[-6:])),
         recent_models=recent_models[:6],
         archive_counts=archive_counts,
-        contribution_relations={
-            item.metadata.id: service.relation_counts_for_contribution(item.metadata.id) for item in published
-        },
+        incoming_relations=incoming_relations,
     )
     for category in categories:
         render(
@@ -178,10 +177,8 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             authors=corpus.authors,
             profiles=corpus.profiles,
             backlink_edges=backlink_edges,
-            relation_activity=service.relation_counts_for_thread(thread.id),
-            contribution_relations={
-                item.metadata.id: service.relation_counts_for_contribution(item.metadata.id) for item in contributions
-            },
+            incoming_relation_activity=service.incoming_relation_counts_for_thread(thread.id),
+            incoming_relations=incoming_relations,
             corpus=corpus,
         )
     for author in sorted(corpus.authors.values(), key=lambda item: item.id):
