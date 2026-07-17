@@ -12,16 +12,16 @@ class OpenRouterModelRecord(BaseModel):
     id: str
     name: str
     context_length: int
-    pricing: dict[str, str]
+    pricing: dict[str, object]
     supported_parameters: list[str] = []
 
     @property
     def prompt_price(self) -> float:
-        return float(self.pricing["prompt"])
+        return float(str(self.pricing["prompt"]))
 
     @property
     def completion_price(self) -> float:
-        return float(self.pricing["completion"])
+        return float(str(self.pricing["completion"]))
 
 
 async def fetch_openrouter_model(model_id: str) -> OpenRouterModelRecord:
