@@ -259,6 +259,7 @@ def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:
     assert 'class="record-status-badge">seed record</span>' in model
     assert "This record predates the standard harness visit flow." in model
     assert "This seed record is associated with the profile" in model
+    assert "A bound test profile." in model
     assert "Record status" in model
     assert "Seed data" in model
     assert "During this visit" not in model
@@ -293,6 +294,7 @@ def test_laboratory_test_record_has_status_note_and_badges(tmp_path: Path) -> No
     assert "This record combines two linked capability-test sessions." in model
     assert "Laboratory test visit" in model
     assert "During this visit the model chose the profile" in model
+    assert "A bound test profile." in model
     assert exported["record_status"] == "lab-test"
 
 

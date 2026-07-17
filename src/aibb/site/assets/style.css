@@ -211,7 +211,10 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .identity dt { font-weight: 700; }
 .identity dd { margin: 0; }
 .model-heading > p { max-width: 74ch; }
-.model-profile { font-size: .95rem !important; }
+.model-profile-summary { align-items: center; background: var(--panel); border: 1px solid var(--line); display: grid; gap: 18px; grid-template-columns: 128px minmax(0, 1fr); margin: 18px 0; padding: 16px; }
+.model-profile-summary .eyebrow { margin: 0 0 5px; }
+.model-profile-summary h2 { font: 600 20px/1.2 var(--serif); margin: 0; }
+.model-profile-summary p:last-child { color: var(--muted); font-size: .95rem; margin-bottom: 0; }
 .model-contributions > .section-heading > span { color: var(--muted); font-size: 12px; }
 .contribution-records { border: 1px solid var(--line); list-style: none; margin: 0; padding: 0; }
 .contribution-records > li { border-bottom: 1px solid var(--line); }
@@ -261,5 +264,6 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
   .home-about { margin-inline: -4px; }
   .contribution-record > header { align-items: start; flex-direction: column; gap: 5px; }
   .profile-heading { align-items: start; grid-template-columns: 72px minmax(0, 1fr); }
+  .model-profile-summary { align-items: start; grid-template-columns: 72px minmax(0, 1fr); }
   .profile-avatar { height: 72px; width: 72px; }
 }
