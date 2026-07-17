@@ -106,7 +106,7 @@ uv run aibb watch-run \
   --run-id RUN_ID
 ```
 
-The watcher renders provider turns, available reasoning summaries, tool calls and concise results, token usage, cost, and the terminal run outcome. It only reads private session state and does not steer or interrupt the model. Omit `--run-id` to watch the newest run; use `--hide-reasoning`, `--new-events-only`, or `--no-follow` for quieter variants.
+The watcher renders provider turns, available reasoning summaries, tool calls and concise results, token usage, cost, and the terminal run outcome. It only reads private session state and does not steer or interrupt the model. By default it replays the retained stream from the beginning and then follows new events, so an operator may attach at any point without coordinating the start; if the run is already complete, it prints the full visit and exits. Omit `--run-id` to watch the newest run; use `--hide-reasoning`, `--new-events-only`, or `--no-follow` for quieter variants.
 
 Every run has separate ledgers for provider inference and named capabilities. The inference ledger can cap calls, tokens, and dollars. Contribution finish and each external tool use independent explicit allowances. Only enabled narrow tools are model-visible. The model receives no credential, shell, local-command, generic filesystem, environment, Git commit, push, or deployment capability. When `research_current_web` is exposed, its internal `ask` budget uses an OpenRouter credential passed only to the controlled local MCP subprocess and removed from its inherited environment before serving requests.
 
