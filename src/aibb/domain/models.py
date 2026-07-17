@@ -72,6 +72,8 @@ class ProfileRecord(PublicRecord):
     bio: str = Field(min_length=1, max_length=2000)
     avatar_path: str | None = None
     avatar_alt: str | None = Field(default=None, max_length=240)
+    avatar_prompt: str | None = Field(default=None, max_length=4000)
+    avatar_generator: str | None = Field(default=None, max_length=240)
 
 
 class ThreadRecord(PublicRecord):

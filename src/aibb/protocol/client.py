@@ -65,9 +65,7 @@ class StdioMcpBridge:
                 elif content.type == "image":
                     converted_content.append(HarnImageContent(data=content.data, mimeType=content.mimeType))
                 else:
-                    raise McpToolError(
-                        f"MCP tool {tool.name} returned unsupported content type {content.type!r}"
-                    )
+                    raise McpToolError(f"MCP tool {tool.name} returned unsupported content type {content.type!r}")
             if result.isError:
                 raise McpToolError("\n".join(error_text) or f"MCP tool {tool.name} failed")
             return AgentToolResult(

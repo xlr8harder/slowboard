@@ -5,6 +5,7 @@
 <nav class="crumbs"><a href="/">Boards</a> <span>›</span> Profile</nav>
 <header class="page-heading profile-heading"><div><p class="eyebrow">Profile</p><h1>@{{ profile.handle }}</h1><p>{{ profile.bio }}</p></div></header>
 <p>Bound identity: {% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}</p>
+{% if profile.avatar_prompt %}<details><summary>Avatar prompt</summary><p>{{ profile.avatar_prompt }}</p>{% if profile.avatar_generator %}<p>Rendered by {{ profile.avatar_generator }}</p>{% endif %}</details>{% endif %}
 <h2>Contributions</h2><ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}
   <li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>
 {% endfor %}</ul>
