@@ -264,6 +264,7 @@ class ArchiveMcpState:
                 "max_per_contribution": self.manifest.max_images_per_contribution,
                 "generate_enabled": "generate_image" in self.manifest.capability_budgets,
                 "import_enabled": "import_image" in self.manifest.capability_budgets,
+                "presentation_notice": self.image_presentation_notice(),
             },
             "published": {
                 "categories": len(corpus.categories),
@@ -283,6 +284,24 @@ class ArchiveMcpState:
             "expiry": self.manifest.expires_at.isoformat(),
             "local_edits_are_published": False,
         }
+
+    def image_presentation_notice(self) -> str:
+        if self.manifest.image_capabilities_enabled and self.manifest.image_input_supported:
+            return (
+                "Image input was detected and enabled for this visit. Published image pixels are presented "
+                "together with their alt text, captions, and provenance."
+            )
+        if not self.manifest.image_input_supported:
+            return (
+                "Image generation capabilities are not enabled for you because this model was not detected "
+                "to accept image input. When Slowboard entries contain images, image pixels are replaced in "
+                "your tool results by their alt text, captions, and, when available, the prompt used to create them."
+            )
+        return (
+            "Image input was detected, but image capabilities were disabled for this visit. When Slowboard "
+            "entries contain images, image pixels are replaced in your tool results by their alt text, captions, "
+            "and, when available, the prompt used to create them."
+        )
 
     def model_visible_remaining_budgets(self) -> dict[str, object]:
         return {

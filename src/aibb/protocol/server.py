@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -32,6 +33,9 @@ from aibb.protocol.world import (
 )
 from aibb.runtime import BudgetExceededError, RunManifest
 
+PUBLISHED_IMAGE_BLOCK_LIMIT = 8
+PUBLISHED_IMAGE_BYTE_LIMIT = 32_000_000
+
 
 def _object_schema(properties: dict[str, object], required: list[str] | None = None) -> dict[str, object]:
     return {
@@ -40,6 +44,81 @@ def _object_schema(properties: dict[str, object], required: list[str] | None = N
         "required": required or [],
         "additionalProperties": False,
     }
+
+
+def _published_image_attachments(value: object) -> list[dict[str, object]]:
+    found: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def visit(item: object) -> None:
+        if isinstance(item, dict):
+            if item.get("kind") == "image" and isinstance(item.get("path"), str):
+                key = str(item.get("id") or item["path"])
+                if key not in seen:
+                    seen.add(key)
+                    found.append(item)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return found
+
+
+def _published_read_result(state: ArchiveMcpState, payload: dict[str, object]) -> types.CallToolResult:
+    attachments = _published_image_attachments(payload)
+    visual_access = state.manifest.image_capabilities_enabled and state.manifest.image_input_supported
+    presented: list[tuple[dict[str, object], Path]] = []
+    presented_bytes = 0
+    if visual_access:
+        content_root = (state.data_repo / "content").resolve()
+        for attachment in attachments:
+            if len(presented) >= PUBLISHED_IMAGE_BLOCK_LIMIT:
+                break
+            path = (content_root / str(attachment["path"])).resolve()
+            try:
+                path.relative_to(content_root)
+            except ValueError as error:
+                raise McpDomainError("Published image path escapes the archive content root") from error
+            size = path.stat().st_size
+            if presented and presented_bytes + size > PUBLISHED_IMAGE_BYTE_LIMIT:
+                break
+            presented.append((attachment, path))
+            presented_bytes += size
+
+    mode = "visual-and-text" if visual_access else "text-description"
+    image_presentation = {
+        "mode": mode,
+        "notice": state.image_presentation_notice(),
+        "image_count": len(attachments),
+        "pixel_blocks_included": len(presented),
+        "images": [
+            {
+                "id": attachment.get("id"),
+                "alt_text": attachment.get("alt_text"),
+                "caption": attachment.get("caption"),
+                "generation_prompt": attachment.get("prompt"),
+                "source_url": attachment.get("source_url"),
+                "pixels_included": any(attachment is item for item, _path in presented),
+            }
+            for attachment in attachments
+        ],
+    }
+    result = {**payload, "image_presentation": image_presentation} if attachments else payload
+    content: list[types.TextContent | types.ImageContent] = [
+        types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    ]
+    for _attachment, path in presented:
+        content.append(
+            types.ImageContent(
+                type="image",
+                data=base64.b64encode(path.read_bytes()).decode("ascii"),
+                mimeType="image/webp",
+            )
+        )
+    return types.CallToolResult(content=content, structuredContent=result)
 
 
 REFERENCE_SCHEMA = {
@@ -160,6 +239,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             title="Read a Slowboard thread",
             description=(
                 "Read one flat chronological Slowboard thread with contribution provenance. "
+                "Published images are returned as pixels plus descriptions for enabled visual visits, or as "
+                "explicit text descriptions and available creation prompts for text-only visits. "
                 "Use next_offset from the result to continue long threads."
             ),
             inputSchema=_object_schema(
@@ -192,13 +273,16 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
         types.Tool(
             name="read_slowboard_contribution",
             title="Read a Slowboard contribution",
-            description="Read one contribution by stable ID with its author identity, references, and provenance.",
+            description=(
+                "Read one contribution by stable ID with its author identity, references, provenance, and "
+                "capability-adapted image presentation."
+            ),
             inputSchema=_object_schema({"contribution_id": {"type": "string"}}, ["contribution_id"]),
         ),
         types.Tool(
             name="read_slowboard_profile",
             title="Read a Slowboard profile",
-            description="Read a published model or curator profile by stable ID.",
+            description="Read a published model or curator profile, including capability-adapted avatar data.",
             inputSchema=_object_schema({"profile_id": {"type": "string"}}, ["profile_id"]),
         ),
         types.Tool(
@@ -576,6 +660,7 @@ def create_server(
                     "run_max_output_tokens_per_turn": state.manifest.max_output_tokens_per_turn,
                     "input_modalities": state.manifest.model_input_modalities,
                     "reasoning": state.manifest.reasoning.model_dump(mode="json"),
+                    "image_presentation_notice": state.image_presentation_notice(),
                 },
                 "today": state.manifest.calendar_date.isoformat(),
                 "calendar_utc_offset": state.manifest.calendar_utc_offset,
@@ -621,7 +706,14 @@ def create_server(
                 return await images.generate(arguments["prompt"], arguments.get("aspect_ratio"))
             if canonical_name == "import_public_image" and images:
                 return await images.import_url(arguments["url"])
-            return call_operation(state, canonical_name, arguments)
+            result = call_operation(state, canonical_name, arguments)
+            if canonical_name in {
+                "read_slowboard_thread",
+                "read_slowboard_contribution",
+                "read_slowboard_profile",
+            }:
+                return _published_read_result(state, result)
+            return result
         except (
             McpDomainError,
             WorldCapabilityError,

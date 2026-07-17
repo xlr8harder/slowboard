@@ -35,6 +35,14 @@ def _default_code_repo() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _resolve_image_policy(policy: Literal["auto", "enable", "disable"], image_input_supported: bool) -> bool:
+    if policy == "enable" and not image_input_supported:
+        raise typer.BadParameter(
+            "--images enable requires catalog-advertised image input or an explicit --image-input allow override"
+        )
+    return image_input_supported and policy != "disable"
+
+
 @app.command("watch-run")
 def watch_run(
     state_root: Annotated[
@@ -313,13 +321,16 @@ def run_model(
             help="Explicitly authorize a model run against the production data lane.",
         ),
     ] = False,
-    enable_images: Annotated[
-        bool,
+    images: Annotated[
+        Literal["auto", "enable", "disable"],
         typer.Option(
-            "--enable-images",
-            help="Explicitly expose image generation/import for this run; disabled by default.",
+            "--images",
+            help=(
+                "Image policy: auto enables visual access and image tools only for detected image-input models; "
+                "enable requires detected support (or --image-input allow); disable keeps the visit text-only."
+            ),
         ),
-    ] = False,
+    ] = "auto",
     image_generation_model: Annotated[
         str | None,
         typer.Option(
@@ -358,11 +369,8 @@ def run_model(
     else:
         catalog = asyncio.run(fetch_openrouter_model(model))
         image_input_supported = catalog.supports_image_input if image_input == "auto" else image_input == "allow"
-        if enable_images and not image_input_supported:
-            raise typer.BadParameter(
-                "--enable-images requires catalog-advertised image input or an explicit --image-input allow override"
-            )
-        if enable_images and image_input_supported and image_generation_model and max_generated_images:
+        image_capabilities_enabled = _resolve_image_policy(images, image_input_supported)
+        if image_capabilities_enabled and image_generation_model and max_generated_images:
             asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=api_key))
         effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
         effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
@@ -395,10 +403,10 @@ def run_model(
             reasoning=catalog.select_reasoning(),
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
-            image_capabilities_enabled=enable_images,
-            image_generation_model=image_generation_model if enable_images else None,
-            max_generated_images=max_generated_images if enable_images else 0,
-            max_imported_images=max_imported_images if enable_images else 0,
+            image_capabilities_enabled=image_capabilities_enabled,
+            image_generation_model=image_generation_model if image_capabilities_enabled else None,
+            max_generated_images=max_generated_images if image_capabilities_enabled else 0,
+            max_imported_images=max_imported_images if image_capabilities_enabled else 0,
             max_image_cost_usd=max_image_cost_usd,
         )
         run_id = manifest.run_id
@@ -415,8 +423,8 @@ def run_model(
                     "max_cost_usd": effective_cost_usd,
                     "image_input_supported": image_input_supported,
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
-                    "image_capabilities_enabled": enable_images,
-                    "image_generation_model": image_generation_model if enable_images else None,
+                    "image_capabilities_enabled": image_capabilities_enabled,
+                    "image_generation_model": image_generation_model if image_capabilities_enabled else None,
                     "developer": catalog.developer,
                     "reasoning": catalog.select_reasoning().model_dump(mode="json"),
                     "publication_lane": site.environment,

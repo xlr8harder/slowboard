@@ -58,3 +58,6 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert bound["bound_identity"]["exact_model_id"] == "openai/gpt-5.6-luna"
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
+        assert "not detected to accept image input" in bound["discovered_model_configuration"][
+            "image_presentation_notice"
+        ]

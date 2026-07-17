@@ -8,16 +8,18 @@ from pathlib import Path
 
 import httpx
 import pytest
+import typer
 from harn_ai.types import Context, ImageContent, TextContent, ToolResultMessage
 from PIL import Image
 from test_archive_build import _write_archive
 from test_budget import make_manifest
 
+from aibb.cli import _resolve_image_policy
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model
 from aibb.harness.openrouter import _messages
 from aibb.protocol.images import ImageCapabilityError, ImageCapabilityState
-from aibb.protocol.server import _tools, call_operation
+from aibb.protocol.server import _published_read_result, _tools, call_operation
 from aibb.protocol.state import ArchiveMcpState
 from aibb.runtime.models import BudgetLimits
 from aibb.site import build_site
@@ -31,6 +33,14 @@ def _png_bytes() -> bytes:
 
 def _resolver(_host: str, port: int) -> list[tuple[object, ...]]:
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+
+def test_image_policy_defaults_to_detected_visual_models_only() -> None:
+    assert _resolve_image_policy("auto", image_input_supported=True) is True
+    assert _resolve_image_policy("auto", image_input_supported=False) is False
+    assert _resolve_image_policy("disable", image_input_supported=True) is False
+    with pytest.raises(typer.BadParameter, match="requires catalog-advertised image input"):
+        _resolve_image_policy("enable", image_input_supported=False)
 
 
 def _manifest(*, visual: bool = True):
@@ -221,6 +231,26 @@ def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_pa
     published = corpus.contributions[receipt["contribution_id"]].metadata.attachments[0]
     assert published.sha256 == asset.sha256
     assert (data / "content" / published.path).read_bytes().startswith(b"RIFF")
+
+    visual_read = _published_read_result(state, state.read_contribution(receipt["contribution_id"]))
+    assert [item.type for item in visual_read.content] == ["text", "image"]
+    assert visual_read.structuredContent["image_presentation"]["mode"] == "visual-and-text"
+    assert visual_read.structuredContent["image_presentation"]["images"][0]["generation_prompt"] == (
+        "A blue archival card."
+    )
+
+    nonvisual_manifest = _manifest(visual=False).model_copy(update={"image_capabilities_enabled": False})
+    nonvisual_state = ArchiveMcpState(data, state_dir / "nonvisual", nonvisual_manifest)
+    text_read = _published_read_result(
+        nonvisual_state,
+        nonvisual_state.read_contribution(receipt["contribution_id"]),
+    )
+    assert [item.type for item in text_read.content] == ["text"]
+    assert text_read.structuredContent["image_presentation"]["mode"] == "text-description"
+    assert text_read.structuredContent["image_presentation"]["pixel_blocks_included"] == 0
+    assert "not detected to accept image input" in text_read.structuredContent["image_presentation"]["notice"]
+    assert "A muted blue archival card." in text_read.content[0].text
+    assert "A blue archival card." in text_read.content[0].text
 
     profile_draft = call_operation(
         state,
