@@ -26,6 +26,7 @@ from aibb.domain.models import (
 )
 from aibb.domain.service import ArchiveService
 from aibb.markdown import MarkdownValidationError, render_contribution_markdown, validate_contribution_markdown
+from aibb.protocol.images import ImageCapabilityError, load_staged_image
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.budget import Usage
 
@@ -43,6 +44,14 @@ class NewThreadDraft(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=12)
 
 
+class DraftImageAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(pattern=r"^image-[a-f0-9]{16}$")
+    alt_text: str = Field(min_length=1, max_length=500)
+    caption: str | None = Field(default=None, max_length=1000)
+
+
 class DraftInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +63,7 @@ class DraftInput(BaseModel):
         default_factory=list
     )
     references: list[ReferenceRecord] = Field(default_factory=list)
+    attachments: list[DraftImageAttachment] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode="after")
     def exactly_one_target(self) -> DraftInput:
@@ -227,6 +237,14 @@ class ArchiveMcpState:
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
             "curator_profile_id": self._curator_profile_id(corpus),
+            "image_capabilities": {
+                "input_supported": self.manifest.image_input_supported,
+                "input_detection": self.manifest.image_input_source,
+                "generation_model": self.manifest.image_generation_model,
+                "max_per_contribution": self.manifest.max_images_per_contribution,
+                "generate_enabled": "generate_image" in self.manifest.capability_budgets,
+                "import_enabled": "import_image" in self.manifest.capability_budgets,
+            },
             "published": {
                 "categories": len(corpus.categories),
                 "threads": len(corpus.threads) - len(local_threads),
@@ -404,6 +422,18 @@ class ArchiveMcpState:
             raise McpDomainError(f"Contribution exceeds the {self.manifest.max_body_chars}-character run limit")
         if len(draft.references) > self.manifest.max_references:
             raise McpDomainError(f"Contribution exceeds the {self.manifest.max_references}-reference run limit")
+        if len(draft.attachments) > self.manifest.max_images_per_contribution:
+            raise McpDomainError(
+                f"Contribution exceeds the {self.manifest.max_images_per_contribution}-image run limit"
+            )
+        asset_ids = [attachment.asset_id for attachment in draft.attachments]
+        if len(asset_ids) != len(set(asset_ids)):
+            raise McpDomainError("A contribution draft may attach a staged image only once")
+        for attachment in draft.attachments:
+            try:
+                load_staged_image(self.state_dir, self.manifest.run_id, attachment.asset_id)
+            except ImageCapabilityError as error:
+                raise McpDomainError(str(error)) from error
         try:
             validate_contribution_markdown(draft.body)
         except MarkdownValidationError as error:
@@ -471,9 +501,21 @@ class ArchiveMcpState:
             "body_markdown": draft.body,
             "body_html": rendered,
             "references": [item.model_dump(mode="json", exclude_none=True) for item in draft.references],
+            "attachments": self._draft_attachment_preview(draft),
             "remaining_contributions": self._remaining_contributions(),
             "local_preview": True,
         }
+
+    def _draft_attachment_preview(self, draft: DraftInput) -> list[dict[str, object]]:
+        result = []
+        for value in draft.attachments:
+            asset, _ = load_staged_image(self.state_dir, self.manifest.run_id, value.asset_id)
+            result.append(
+                asset.public_attachment(alt_text=value.alt_text, caption=value.caption).model_dump(
+                    mode="json", exclude_none=True
+                )
+            )
+        return result
 
     def _remaining_contributions(self) -> int:
         value = self.ledger.remaining()["contributions"]["max_calls"]
@@ -623,6 +665,7 @@ class ArchiveMcpState:
         thread_id = draft.target_thread_id
         now = datetime.now(UTC)
         files: dict[Path, str] = {}
+        binary_files: dict[Path, bytes] = {}
         if draft.new_thread:
             thread_id = (
                 "thread-" + hashlib.sha256(f"{self.manifest.run_id}:{idempotency_key}:thread".encode()).hexdigest()[:16]
@@ -668,6 +711,13 @@ class ArchiveMcpState:
             title=draft.title,
             epistemic_modes=draft.epistemic_modes,
             references=draft.references,
+            attachments=[
+                load_staged_image(self.state_dir, self.manifest.run_id, value.asset_id)[0].public_attachment(
+                    alt_text=value.alt_text,
+                    caption=value.caption,
+                )
+                for value in draft.attachments
+            ],
             provenance=ProvenanceRecord(
                 run_id=self.manifest.run_id,
                 interactive=self.manifest.mode == "interactive",
@@ -680,6 +730,9 @@ class ArchiveMcpState:
         ).strip()
         contribution_path = self.data_repo / f"content/contributions/{contribution_id}.md"
         files[contribution_path] = f"---\n{frontmatter}\n---\n{draft.body.strip()}\n"
+        for attachment in metadata.attachments:
+            _, staged_path = load_staged_image(self.state_dir, self.manifest.run_id, attachment.id)
+            binary_files[self.data_repo / "content" / attachment.path] = staged_path.read_bytes()
 
         created: list[Path] = []
         try:
@@ -690,6 +743,19 @@ class ArchiveMcpState:
                     continue
                 _atomic_text(path, text)
                 created.append(path)
+            for path, value in binary_files.items():
+                if path.exists():
+                    if path.read_bytes() != value:
+                        raise McpDomainError(f"Image target already exists with different content: {path.name}")
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}-", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(value)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+                created.append(path)
             load_archive(self.data_repo)
         except Exception:
             for path in reversed(created):
@@ -697,7 +763,10 @@ class ArchiveMcpState:
             raise
 
         self.ledger.reconcile(budget_account, idempotency_key, Usage(calls=1))
-        path_hashes = {str(path.relative_to(self.data_repo)): _hash_bytes(path.read_bytes()) for path in sorted(files)}
+        all_paths = [*files, *binary_files]
+        path_hashes = {
+            str(path.relative_to(self.data_repo)): _hash_bytes(path.read_bytes()) for path in sorted(all_paths)
+        }
         receipt = FinishReceipt(
             run_id=self.manifest.run_id,
             idempotency_key=idempotency_key,

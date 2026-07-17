@@ -67,6 +67,10 @@ class RunManifest(BaseModel):
     max_output_tokens_per_turn: int = Field(default=16_000, ge=1)
     model_context_window: int | None = Field(default=None, ge=1)
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
+    image_input_supported: bool = False
+    image_input_source: Literal["catalog", "curator-override"] = "catalog"
+    image_generation_model: str | None = Field(default=None, min_length=1, max_length=240)
+    max_images_per_contribution: int = Field(default=4, ge=0, le=12)
     compaction_policy: Literal["deny", "ask", "allow"] = "ask"
     compaction_soft_threshold: float = Field(default=0.72, gt=0, lt=1)
     compaction_hard_threshold: float = Field(default=0.88, gt=0, lt=1)

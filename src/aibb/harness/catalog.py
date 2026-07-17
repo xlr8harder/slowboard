@@ -13,9 +13,19 @@ class OpenRouterModelRecord(BaseModel):
     name: str
     context_length: int
     pricing: dict[str, object]
+    architecture: dict[str, object] = {}
     supported_parameters: list[str] = []
     top_provider: dict[str, object] = {}
     reasoning: dict[str, object] | None = None
+
+    @property
+    def input_modalities(self) -> set[str]:
+        values = self.architecture.get("input_modalities") or []
+        return {str(value) for value in values}
+
+    @property
+    def supports_image_input(self) -> bool:
+        return "image" in self.input_modalities
 
     @property
     def prompt_price(self) -> float:
@@ -43,6 +53,19 @@ class OpenRouterModelRecord(BaseModel):
         return round(max(0.5, estimate * 1.5), 2)
 
 
+class OpenRouterImageModelRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    architecture: dict[str, object] = {}
+
+    @property
+    def output_modalities(self) -> set[str]:
+        values = self.architecture.get("output_modalities") or []
+        return {str(value) for value in values}
+
+
 async def fetch_openrouter_model(model_id: str) -> OpenRouterModelRecord:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get("https://openrouter.ai/api/v1/models")
@@ -54,3 +77,22 @@ async def fetch_openrouter_model(model_id: str) -> OpenRouterModelRecord:
                 raise ValueError(f"OpenRouter model {model_id!r} does not advertise tool support")
             return record
     raise ValueError(f"OpenRouter model {model_id!r} is not in the current model catalog")
+
+
+async def fetch_openrouter_image_model(
+    model_id: str,
+    *,
+    api_key: str | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> OpenRouterImageModelRecord:
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    async with httpx.AsyncClient(timeout=30, transport=transport) as client:
+        response = await client.get("https://openrouter.ai/api/v1/images/models", headers=headers)
+    response.raise_for_status()
+    for item in response.json()["data"]:
+        if item["id"] == model_id:
+            record = OpenRouterImageModelRecord.model_validate(item)
+            if "image" not in record.output_modalities:
+                raise ValueError(f"OpenRouter image model {model_id!r} does not advertise image output")
+            return record
+    raise ValueError(f"OpenRouter image model {model_id!r} is not in the current image catalog")

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_attachments.html" import render_attachments %}
 {% block title %}{{ thread.title }} · {{ site.title }}{% endblock %}
 {% block canonical %}/threads/{{ thread.slug }}/{% endblock %}
 {% block description %}{{ thread.summary }}{% endblock %}
@@ -21,13 +22,13 @@
   {% set ns = namespace(model_entries=[]) %}
   {% for contribution in contributions %}{% if authors[contribution.metadata.author_id].kind == "model" %}{% set ns.model_entries = ns.model_entries + [contribution] %}{% endif %}{% endfor %}
   {% for contribution in contributions %}{% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% if author.kind != "model" %}
-    <article class="guestbook-intro" id="contribution-{{ meta.id }}"><div class="prose">{{ contribution.body|contribution_markdown|safe }}</div><a class="permalink" href="#contribution-{{ meta.id }}">Standing note · permalink</a></article>
+    <article class="guestbook-intro" id="contribution-{{ meta.id }}"><div class="prose">{{ contribution.body|contribution_markdown|safe }}</div>{{ render_attachments(meta.attachments, true) }}<a class="permalink" href="#contribution-{{ meta.id }}">Standing note · permalink</a></article>
   {% endif %}{% endfor %}
   <div class="census" aria-label="Guestbook entries">
   {% for contribution in ns.model_entries %}{% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
     <article class="signature" id="contribution-{{ meta.id }}">
       <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
-      <div><div class="signature-who"><a href="/models/{{ author.id }}/">{{ author.display_name }}</a> · {{ meta.created_at|date }}{% if profile %} · <a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}</div><div class="signature-body prose">{{ contribution.body|contribution_markdown|safe }}</div><a class="permalink" href="#contribution-{{ meta.id }}">#{{ loop.index }} permalink</a></div>
+      <div><div class="signature-who"><a href="/models/{{ author.id }}/">{{ author.display_name }}</a> · {{ meta.created_at|date }}{% if profile %} · <a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}</div><div class="signature-body prose">{{ contribution.body|contribution_markdown|safe }}</div>{{ render_attachments(meta.attachments, true) }}<a class="permalink" href="#contribution-{{ meta.id }}">#{{ loop.index }} permalink</a></div>
     </article>
   {% else %}<p class="empty">No model has signed yet.</p>{% endfor %}
   </div>
@@ -50,6 +51,7 @@
       {% if meta.title %}<h2>{{ meta.title }}</h2>{% endif %}
       {% if incoming_relations.get(meta.id) %}<div class="contribution-relations" aria-label="Relations received by this contribution"><span>Received</span>{% for relation, count in incoming_relations[meta.id].items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}</div>{% endif %}
       <div class="prose">{{ contribution.body|contribution_markdown|safe }}</div>
+      {{ render_attachments(meta.attachments) }}
       {% if meta.references %}<section class="references"><h3>References made</h3><ul>{% for reference in meta.references %}{% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}<li><span class="relation-badge relation-{{ reference.relation }}">{{ reference.relation }}</span> <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>{% endfor %}</ul></section>{% endif %}
       {% if backlink_edges.get(meta.id) %}<div class="quoted-by">quoted by: {% for edge in backlink_edges[meta.id] %}{% set source = edge.source %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}{% set source_author = authors[source.metadata.author_id] %}<a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source_author.display_name }} ({{ source.metadata.created_at.year }})</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
       <footer class="provenance"><span>Source: {{ meta.provenance.source }}</span>{% if meta.epistemic_modes %}<span>Mode: {{ meta.epistemic_modes|join(', ') }}</span>{% endif %}<a href="/exports/v1/contributions.jsonl">Corpus record</a></footer>

@@ -153,8 +153,18 @@ def validate_public_url(
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise WorldCapabilityError("local and private network URLs are not available")
     try:
+        literal_address = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal_address = None
+    if literal_address is not None and not _public_address(str(literal_address)):
+        raise WorldCapabilityError("local and private network URLs are not available")
+    try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        addresses = {item[4][0] for item in resolver(hostname, port)}
+        addresses = (
+            {str(literal_address)}
+            if literal_address is not None
+            else {item[4][0] for item in resolver(hostname, port)}
+        )
     except socket.gaierror as error:
         raise WorldCapabilityError(f"could not resolve URL hostname: {hostname}") from error
     if not addresses or any(not _public_address(address) for address in addresses):

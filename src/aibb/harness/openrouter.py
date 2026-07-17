@@ -44,6 +44,7 @@ def openrouter_model(
     max_tokens: int,
     prompt_price_per_token: float,
     completion_price_per_token: float,
+    image_input_supported: bool = False,
 ) -> Model:
     return Model(
         id=model_id,
@@ -52,7 +53,7 @@ def openrouter_model(
         provider="openrouter",
         baseUrl=OPENROUTER_ENDPOINT,
         reasoning=True,
-        input=["text"],
+        input=["text", "image"] if image_input_supported else ["text"],
         cost=ModelCost(
             input=prompt_price_per_token * 1_000_000,
             output=completion_price_per_token * 1_000_000,
@@ -70,11 +71,25 @@ def _text_content(value: Any) -> str:
     return "\n".join(block.text for block in value if getattr(block, "type", None) == "text")
 
 
-def _messages(context: Context) -> list[dict[str, Any]]:
+def _image_content(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        return []
+    return [
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:{block.mimeType};base64,{block.data}"},
+        }
+        for block in value
+        if getattr(block, "type", None) == "image"
+    ]
+
+
+def _messages(context: Context, *, image_input_supported: bool = False) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     if context.systemPrompt:
         messages.append({"role": "system", "content": context.systemPrompt})
-    for message in context.messages:
+    pending_images: list[dict[str, Any]] = []
+    for index, message in enumerate(context.messages):
         if message.role == "user":
             messages.append({"role": "user", "content": _text_content(message.content)})
         elif message.role == "assistant":
@@ -111,6 +126,30 @@ def _messages(context: Context) -> list[dict[str, Any]]:
                     "content": _text_content(message.content),
                 }
             )
+            if image_input_supported:
+                pending_images.extend(_image_content(message.content))
+                next_role = (
+                    getattr(context.messages[index + 1], "role", None)
+                    if index + 1 < len(context.messages)
+                    else None
+                )
+                if next_role != "toolResult" and pending_images:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "The controlled harness is presenting image output from the preceding "
+                                        "tool result(s) for visual inspection."
+                                    ),
+                                },
+                                *pending_images,
+                            ],
+                        }
+                    )
+                    pending_images = []
     return messages
 
 
@@ -173,7 +212,7 @@ class OpenRouterAdapter:
         reservation_key = self._next_key()
         payload = {
             "model": model.id,
-            "messages": _messages(context),
+            "messages": _messages(context, image_input_supported="image" in model.input),
             "tools": [
                 {
                     "type": "function",

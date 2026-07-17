@@ -12,6 +12,7 @@ dependencies = [
     "markdown-it-py>=4,<5",
     "mcp>=1,<2",
     "packaging>=24,<27",
+    "pillow>=10,<11",
     "pydantic>=2,<3",
     "pyyaml>=6,<7",
     "typer>=0.16,<1",

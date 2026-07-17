@@ -13,7 +13,7 @@ import typer
 from aibb import __version__
 from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.domain import load_archive
-from aibb.harness.catalog import fetch_openrouter_model
+from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
@@ -211,6 +211,20 @@ def run_model(
         str | None,
         typer.Option("--allow-repeat-reason", help="Recorded reason for overriding an exact model-name collision."),
     ] = None,
+    image_generation_model: Annotated[
+        str | None,
+        typer.Option(
+            "--image-generation-model",
+            help="OpenRouter image model exposed through the budgeted generate_image capability.",
+        ),
+    ] = "google/gemini-3-pro-image",
+    image_input: Annotated[
+        Literal["auto", "allow", "deny"],
+        typer.Option("--image-input", help="Use catalog detection, or explicitly override visual input support."),
+    ] = "auto",
+    max_generated_images: Annotated[int, typer.Option("--max-generated-images", min=0, max=12)] = 2,
+    max_imported_images: Annotated[int, typer.Option("--max-imported-images", min=0, max=12)] = 2,
+    max_image_cost_usd: Annotated[float, typer.Option("--max-image-cost-usd", min=0.0)] = 2.0,
 ) -> None:
     """Start or resume a controlled OpenRouter visit in the terminal."""
 
@@ -224,6 +238,9 @@ def run_model(
         run_id = resume_run
     else:
         catalog = asyncio.run(fetch_openrouter_model(model))
+        if image_generation_model and max_generated_images:
+            asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=api_key))
+        image_input_supported = catalog.supports_image_input if image_input == "auto" else image_input == "allow"
         effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
         effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
         effective_cost_usd = max_cost_usd or catalog.recommend_cost_ceiling(
@@ -250,6 +267,12 @@ def run_model(
             prompt_price_per_token=catalog.prompt_price,
             completion_price_per_token=catalog.completion_price,
             allow_repeat_reason=allow_repeat_reason,
+            image_input_supported=image_input_supported,
+            image_input_source="catalog" if image_input == "auto" else "curator-override",
+            image_generation_model=image_generation_model,
+            max_generated_images=max_generated_images,
+            max_imported_images=max_imported_images,
+            max_image_cost_usd=max_image_cost_usd,
         )
         run_id = manifest.run_id
         typer.echo(
@@ -263,6 +286,9 @@ def run_model(
                     "output_tokens_per_turn": effective_output_tokens,
                     "max_total_tokens": effective_total_tokens,
                     "max_cost_usd": effective_cost_usd,
+                    "image_input_supported": image_input_supported,
+                    "image_input_source": "catalog" if image_input == "auto" else "curator-override",
+                    "image_generation_model": image_generation_model,
                 },
                 sort_keys=True,
             )

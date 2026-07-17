@@ -98,6 +98,12 @@ def create_run_manifest(
     prompt_price_per_token: float,
     completion_price_per_token: float,
     allow_repeat_reason: str | None,
+    image_input_supported: bool = False,
+    image_input_source: Literal["catalog", "curator-override"] = "catalog",
+    image_generation_model: str | None = "google/gemini-3-pro-image",
+    max_generated_images: int = 2,
+    max_imported_images: int = 2,
+    max_image_cost_usd: float = 2.0,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
     normalized_name = model_id
@@ -143,6 +149,9 @@ def create_run_manifest(
         max_output_tokens_per_turn=max_output_tokens,
         model_context_window=model_context_window,
         model_max_completion_tokens=model_max_completion_tokens,
+        image_input_supported=image_input_supported,
+        image_input_source=image_input_source,
+        image_generation_model=image_generation_model,
         compaction_policy=compaction_policy,
         prompt_price_per_token=prompt_price_per_token,
         completion_price_per_token=completion_price_per_token,
@@ -167,6 +176,29 @@ def create_run_manifest(
             ),
             "browse": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
             "verify": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
+            **(
+                {
+                    "generate_image": BudgetLimits(
+                        max_calls=max_generated_images,
+                        max_cost_usd=max_image_cost_usd,
+                        max_request_bytes=40_000,
+                        max_result_bytes=32_000_000,
+                    )
+                }
+                if image_generation_model and max_generated_images
+                else {}
+            ),
+            **(
+                {
+                    "import_image": BudgetLimits(
+                        max_calls=max_imported_images,
+                        max_request_bytes=8_192,
+                        max_result_bytes=32_000_000,
+                    )
+                }
+                if max_imported_images
+                else {}
+            ),
         },
         collision_override_reason=allow_repeat_reason,
     )
@@ -276,6 +308,7 @@ async def run_openrouter_visit(
         max_tokens=max_output_tokens,
         prompt_price_per_token=catalog.prompt_price,
         completion_price_per_token=catalog.completion_price,
+        image_input_supported=manifest.image_input_supported,
     )
     adapter = OpenRouterAdapter(
         api_key=api_key,
@@ -287,7 +320,7 @@ async def run_openrouter_visit(
         app_url=load_archive(data_repo).site.base_url,
     )
     mcp_environment = _clean_mcp_environment()
-    if "ask" in manifest.capability_budgets:
+    if {"ask", "generate_image"} & manifest.capability_budgets.keys():
         mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
     parameters = StdioServerParameters(
         command=sys.executable,

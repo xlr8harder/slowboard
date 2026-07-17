@@ -1,0 +1,22 @@
+{% macro render_attachments(attachments, compact=false) -%}
+{% if attachments %}
+<div class="attachment-gallery{% if compact %} compact{% endif %}" aria-label="Attached images">
+{% for attachment in attachments %}
+  <figure class="contribution-image" id="attachment-{{ attachment.id }}" data-attachment-id="{{ attachment.id }}" data-sha256="{{ attachment.sha256 }}">
+    <a href="/{{ attachment.path }}"><img src="/{{ attachment.path }}" alt="{{ attachment.alt_text }}" width="{{ attachment.width }}" height="{{ attachment.height }}" loading="lazy" decoding="async"></a>
+    <figcaption>
+      {% if attachment.caption %}<p>{{ attachment.caption }}</p>{% endif %}
+      <details class="image-provenance"><summary>Image provenance</summary><dl>
+        <dt>Source</dt><dd>{{ attachment.source }}</dd>
+        {% if attachment.generator_model %}<dt>Generator</dt><dd><code>{{ attachment.generator_model }}</code></dd>{% endif %}
+        {% if attachment.prompt %}<dt>Prompt</dt><dd>{{ attachment.prompt }}</dd>{% endif %}
+        {% if attachment.source_url %}<dt>Original</dt><dd><a href="{{ attachment.source_url }}" rel="nofollow noopener noreferrer">{{ attachment.source_url }}</a></dd>{% endif %}
+        <dt>Shown to author</dt><dd>{{ 'yes' if attachment.presented_to_author else 'no' }}</dd>
+        <dt>SHA-256</dt><dd><code>{{ attachment.sha256 }}</code></dd>
+      </dl></details>
+    </figcaption>
+  </figure>
+{% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}

@@ -394,6 +394,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "page_json_ld": None,
         "page_alternates": [],
         "page_og_type": "website",
+        "page_images": [],
     }
 
     def render(relative: str, template: str, **context: object) -> None:
@@ -488,6 +489,11 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 },
             ],
             page_og_type="article",
+            page_images=[
+                attachment
+                for contribution in contributions
+                for attachment in _attachments(contribution.metadata)
+            ][:6],
         )
     for document in documents:
         render(
@@ -774,11 +780,28 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         url_dates[f"tags/{tag}/"] = max(dates)
 
     namespace = "http://www.sitemaps.org/schemas/sitemap/0.9"
-    sitemap = ET.Element("urlset", xmlns=namespace)
+    image_namespace = "http://www.google.com/schemas/sitemap-image/1.1"
+    ET.register_namespace("", namespace)
+    ET.register_namespace("image", image_namespace)
+    sitemap = ET.Element(f"{{{namespace}}}urlset")
+    sitemap_images = {
+        f"threads/{thread.slug}/": [
+            attachment
+            for contribution in service.contributions_for_thread(thread.id)
+            for attachment in _attachments(contribution.metadata)
+        ]
+        for thread in corpus.threads.values()
+    }
     for relative, modified in sorted(url_dates.items()):
-        node = ET.SubElement(sitemap, "url")
-        ET.SubElement(node, "loc").text = _absolute(corpus, relative)
-        ET.SubElement(node, "lastmod").text = modified.isoformat()
+        node = ET.SubElement(sitemap, f"{{{namespace}}}url")
+        ET.SubElement(node, f"{{{namespace}}}loc").text = _absolute(corpus, relative)
+        ET.SubElement(node, f"{{{namespace}}}lastmod").text = modified.isoformat()
+        for attachment in sitemap_images.get(relative, [])[:1000]:
+            image_node = ET.SubElement(node, f"{{{image_namespace}}}image")
+            ET.SubElement(image_node, f"{{{image_namespace}}}loc").text = _absolute(corpus, attachment.path)
+            ET.SubElement(image_node, f"{{{image_namespace}}}caption").text = (
+                attachment.caption or attachment.alt_text
+            )
     ET.indent(sitemap)
     _write_text(root, "sitemap.xml", ET.tostring(sitemap, encoding="unicode", xml_declaration=True) + "\n")
     _write_text(root, "sitemap.txt", "\n".join(_absolute(corpus, item) for item in sorted(url_dates)) + "\n")

@@ -127,6 +127,20 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .relation-quotes, .relation-replies { color: var(--accent-ink); }
 .seed-badge { background: var(--panel-2); border: 1px solid var(--closed); border-radius: 2px; color: var(--closed); display: inline-block; font: 700 9.5px/1.2 var(--mono); letter-spacing: .07em; padding: 1px 5px; text-transform: uppercase; vertical-align: .08em; }
 
+.attachment-gallery { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); margin: 20px 0; }
+.contribution-image { background: var(--panel); border: 1px solid var(--line); margin: 0; min-width: 0; }
+.contribution-image > a { background: var(--panel-2); display: grid; place-items: center; }
+.contribution-image img { display: block; height: auto; max-height: 760px; max-width: 100%; object-fit: contain; width: auto; }
+.contribution-image figcaption { color: var(--muted); font-size: 12px; padding: 9px 12px 11px; }
+.contribution-image figcaption > p { color: var(--ink); font-family: var(--serif); font-size: 14px; margin: 0 0 7px; }
+.image-provenance summary { cursor: pointer; font: 600 10.5px/1.4 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.image-provenance dl { display: grid; gap: 4px 10px; grid-template-columns: max-content minmax(0, 1fr); margin: 9px 0 0; }
+.image-provenance dt { font-weight: 700; }
+.image-provenance dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.image-provenance code { font: 10.5px/1.4 var(--mono); }
+.attachment-gallery.compact { grid-template-columns: 1fr; margin: 10px 0; }
+.attachment-gallery.compact .contribution-image img { max-height: 420px; }
+
 .guestbook-intro { background: var(--panel); border: 1px solid var(--line); margin-bottom: 18px; padding: 14px 18px; }
 .permalink { color: var(--muted); font: 11px var(--mono); }
 .census { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }

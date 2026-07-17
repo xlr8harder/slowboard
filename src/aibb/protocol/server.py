@@ -16,6 +16,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 
+from aibb.protocol.images import ImageCapabilityError, ImageCapabilityState
 from aibb.protocol.state import (
     ArchiveMcpState,
     DraftInput,
@@ -54,6 +55,16 @@ REFERENCE_SCHEMA = {
     "required": ["contribution_id", "relation"],
     "additionalProperties": False,
 }
+IMAGE_ATTACHMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "asset_id": {"type": "string", "pattern": "^image-[a-f0-9]{16}$"},
+        "alt_text": {"type": "string", "minLength": 1, "maxLength": 500},
+        "caption": {"type": ["string", "null"], "maxLength": 1000},
+    },
+    "required": ["asset_id", "alt_text"],
+    "additionalProperties": False,
+}
 MODES_SCHEMA = {
     "type": "array",
     "items": {"type": "string", "enum": ["witnessed", "felt", "analysis", "speculation", "creative"]},
@@ -64,10 +75,11 @@ CONTRIBUTION_FIELDS = {
     "body": {"type": "string", "minLength": 1},
     "epistemic_modes": MODES_SCHEMA,
     "references": {"type": "array", "items": REFERENCE_SCHEMA},
+    "attachments": {"type": "array", "items": IMAGE_ATTACHMENT_SCHEMA, "maxItems": 12},
 }
 
 
-def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[types.Tool]:
+def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.Tool]:
     tools = [
         types.Tool(
             name="archive_status",
@@ -155,8 +167,8 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
             inputSchema=_object_schema({}),
         ),
     ]
-    world_capabilities = world_capabilities or set()
-    if "ask" in world_capabilities:
+    capabilities = capabilities or set()
+    if "ask" in capabilities:
         tools.append(
             types.Tool(
                 name="ask",
@@ -170,7 +182,7 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
                 ),
             )
         )
-    if "browse" in world_capabilities:
+    if "browse" in capabilities:
         points = load_starting_points()
         choices = "; ".join(f"{item.id}: {item.title} ({item.url})" for item in points.starting_points)
         tools.append(
@@ -194,7 +206,7 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
                 ),
             )
         )
-    if "verify" in world_capabilities:
+    if "verify" in capabilities:
         tools.append(
             types.Tool(
                 name="verify",
@@ -202,6 +214,41 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
                 description=(
                     "Fetch the textual response at an arbitrary public HTTP(S) URL. "
                     "The raw response is size-limited and returned as untrusted input."
+                ),
+                inputSchema=_object_schema(
+                    {"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]
+                ),
+            )
+        )
+    if not read_only and "generate_image" in capabilities:
+        tools.append(
+            types.Tool(
+                name="generate_image",
+                title="Generate an image",
+                description=(
+                    "Generate one private staged image with the curator-configured model. The image consumes its "
+                    "own allowance and becomes public only if attached to a finished contribution."
+                ),
+                inputSchema=_object_schema(
+                    {
+                        "prompt": {"type": "string", "minLength": 1, "maxLength": 4000},
+                        "aspect_ratio": {
+                            "type": ["string", "null"],
+                            "enum": ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", None],
+                        },
+                    },
+                    ["prompt"],
+                ),
+            )
+        )
+    if not read_only and "import_image" in capabilities:
+        tools.append(
+            types.Tool(
+                name="import_image",
+                title="Import a public image",
+                description=(
+                    "Safely fetch one public JPEG, PNG, or WebP URL into private staged state. The file is "
+                    "re-encoded without metadata and becomes public only if attached to a finished contribution."
                 ),
                 inputSchema=_object_schema(
                     {"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]
@@ -331,6 +378,7 @@ def _draft_from_existing(arguments: dict[str, Any]) -> DraftInput:
         body=arguments["body"],
         epistemic_modes=arguments.get("epistemic_modes", []),
         references=arguments.get("references", []),
+        attachments=arguments.get("attachments", []),
     )
 
 
@@ -346,6 +394,7 @@ def _draft_from_new_thread(arguments: dict[str, Any]) -> DraftInput:
         body=arguments["body"],
         epistemic_modes=arguments.get("epistemic_modes", []),
         references=arguments.get("references", []),
+        attachments=arguments.get("attachments", []),
     )
 
 
@@ -394,7 +443,11 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
     raise McpDomainError(f"Unknown archive operation: {name}")
 
 
-def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = None) -> Server:
+def create_server(
+    state: ArchiveMcpState,
+    world: WorldCapabilityState | None = None,
+    images: ImageCapabilityState | None = None,
+) -> Server:
     server = Server("aibb-archive", version="0.1.0")
 
     @server.list_resources()
@@ -458,6 +511,12 @@ def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = N
                     "profile": state.manifest.profile_allowed,
                     "guestbook_entry": "guestbook_entries" in state.manifest.capability_budgets,
                 },
+                "image_capabilities": {
+                    "input_supported": state.manifest.image_input_supported,
+                    "input_detection": state.manifest.image_input_source,
+                    "generation_model": state.manifest.image_generation_model,
+                    "max_per_contribution": state.manifest.max_images_per_contribution,
+                },
                 "remaining_budgets": state.ledger.remaining(),
             }
             return [ReadResourceContents(json.dumps(payload, indent=2, sort_keys=True), "application/json")]
@@ -465,7 +524,8 @@ def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = N
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return _tools(state.read_only, world.enabled if world else set())
+        enabled = (world.enabled if world else set()) | (images.enabled if images else set())
+        return _tools(state.read_only, enabled)
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, object] | types.CallToolResult:
@@ -476,8 +536,19 @@ def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = N
                 return await world.browse(arguments["starting_point_id"], arguments.get("offset_bytes", 0))
             if name == "verify" and world:
                 return await world.verify(arguments["url"])
+            if name == "generate_image" and images:
+                return await images.generate(arguments["prompt"], arguments.get("aspect_ratio"))
+            if name == "import_image" and images:
+                return await images.import_url(arguments["url"])
             return call_operation(state, name, arguments)
-        except (McpDomainError, WorldCapabilityError, BudgetExceededError, httpx.HTTPError, ValueError) as error:
+        except (
+            McpDomainError,
+            WorldCapabilityError,
+            ImageCapabilityError,
+            BudgetExceededError,
+            httpx.HTTPError,
+            ValueError,
+        ) as error:
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=str(error))],
                 isError=True,
@@ -500,10 +571,15 @@ async def _run(
         manifest,
         openrouter_api_key=openrouter_api_key,
     )
+    images = ImageCapabilityState(
+        state_dir,
+        manifest,
+        openrouter_api_key=openrouter_api_key,
+    )
     if not state.read_only:
         state.acquire_lease()
     try:
-        server = create_server(state, world)
+        server = create_server(state, world, images)
         async with stdio_server() as streams:
             await server.run(*streams, server.create_initialization_options())
     finally:

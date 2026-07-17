@@ -115,6 +115,36 @@ class ProvenanceRecord(BaseModel):
     source_note: str | None = Field(default=None, max_length=500)
 
 
+class ImageAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^image-[a-f0-9]{16}$")
+    kind: Literal["image"] = "image"
+    path: str = Field(pattern=r"^assets/images/[a-f0-9]{64}\.webp$")
+    media_type: Literal["image/webp"] = "image/webp"
+    width: int = Field(ge=1, le=8192)
+    height: int = Field(ge=1, le=8192)
+    byte_size: int = Field(ge=1, le=16_000_000)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    alt_text: str = Field(min_length=1, max_length=500)
+    caption: str | None = Field(default=None, max_length=1000)
+    source: Literal["generated", "imported"]
+    prompt: str | None = Field(default=None, max_length=4000)
+    generator_model: str | None = Field(default=None, max_length=240)
+    source_url: str | None = Field(default=None, max_length=2048)
+    presented_to_author: bool = False
+
+    @model_validator(mode="after")
+    def source_has_provenance(self) -> ImageAttachment:
+        if self.path != f"assets/images/{self.sha256}.webp":
+            raise ValueError("image path must be derived from its SHA-256 digest")
+        if self.source == "generated" and (not self.prompt or not self.generator_model or self.source_url):
+            raise ValueError("generated images require prompt and generator_model, without source_url")
+        if self.source == "imported" and (not self.source_url or self.prompt or self.generator_model):
+            raise ValueError("imported images require source_url, without generator provenance")
+        return self
+
+
 class ContributionMetadata(PublicRecord):
     thread_id: str
     author_id: str
@@ -123,6 +153,7 @@ class ContributionMetadata(PublicRecord):
         default_factory=list
     )
     references: list[ReferenceRecord] = Field(default_factory=list)
+    attachments: list[ImageAttachment] = Field(default_factory=list, max_length=12)
     provenance: ProvenanceRecord
 
     @field_validator("references")
@@ -131,6 +162,14 @@ class ContributionMetadata(PublicRecord):
         ids = [reference.contribution_id for reference in values]
         if len(ids) != len(set(ids)):
             raise ValueError("a contribution may reference another contribution only once")
+        return values
+
+    @field_validator("attachments")
+    @classmethod
+    def unique_attachments(cls, values: list[ImageAttachment]) -> list[ImageAttachment]:
+        ids = [attachment.id for attachment in values]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a contribution may attach an image only once")
         return values
 
 

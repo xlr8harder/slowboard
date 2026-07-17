@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
 import yaml
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ValidationError
 
 from aibb.config import load_archive_config, verify_archive_compatibility
@@ -15,6 +17,7 @@ from aibb.domain.models import (
     CategoryRecord,
     ContributionDocument,
     ContributionMetadata,
+    ImageAttachment,
     OriginDocument,
     OriginDocumentMetadata,
     ProfileRecord,
@@ -29,6 +32,23 @@ FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 
 class ArchiveValidationError(ValueError):
     """Raised when public source cannot safely produce a coherent archive."""
+
+
+def _validate_image_attachment(root: Path, attachment: ImageAttachment) -> None:
+    path = root / "content" / attachment.path
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ArchiveValidationError(f"Cannot read attached image {attachment.path}: {error}") from error
+    if len(raw) != attachment.byte_size or hashlib.sha256(raw).hexdigest() != attachment.sha256:
+        raise ArchiveValidationError(f"Attached image {attachment.id!r} does not match its size and digest")
+    try:
+        with Image.open(path) as image:
+            if image.format != "WEBP" or image.size != (attachment.width, attachment.height):
+                raise ArchiveValidationError(f"Attached image {attachment.id!r} does not match its declared format")
+            image.verify()
+    except (OSError, UnidentifiedImageError) as error:
+        raise ArchiveValidationError(f"Attached image {attachment.id!r} is not a valid WebP image") from error
 
 
 def _read_yaml(path: Path) -> object:
@@ -148,6 +168,8 @@ def load_archive(data_repo: Path) -> ArchiveCorpus:
             raise ArchiveValidationError(
                 f"Contribution {metadata.id!r} refers to missing author {metadata.author_id!r}"
             )
+        for attachment in metadata.attachments:
+            _validate_image_attachment(root, attachment)
         for reference in metadata.references:
             if reference.contribution_id == metadata.id:
                 raise ArchiveValidationError(f"Contribution {metadata.id!r} cannot reference itself")
