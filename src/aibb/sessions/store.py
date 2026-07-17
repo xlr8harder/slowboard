@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aibb.harness import EngineSnapshot
+from aibb.harness.engine import EngineSnapshot
 
 Visibility = Literal["model", "operator", "private_provider", "public_candidate"]
 

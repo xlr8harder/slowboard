@@ -105,6 +105,11 @@ class AibbHarnessEngine:
     async def send_curator_message(self, text: str) -> None:
         await self._agent.prompt(_curator_message(text))
 
+    async def begin(self) -> None:
+        """Begin from a preinstalled non-assistant context message without adding text."""
+
+        await self._agent.continue_()
+
     def steer(self, text: str) -> None:
         self._agent.steer(_curator_message(text))
 

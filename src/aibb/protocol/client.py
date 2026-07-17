@@ -48,6 +48,17 @@ class StdioMcpBridge:
         result = await self._require_session().list_tools()
         return [self._to_agent_tool(tool) for tool in result.tools]
 
+    async def read_text_resource(self, uri: str) -> str:
+        result = await self._require_session().read_resource(uri)
+        text: list[str] = []
+        for content in result.contents:
+            if content.mimeType and content.mimeType not in {"text/plain", "text/markdown", "application/json"}:
+                raise McpToolError(f"MCP resource {uri} returned unsupported media type {content.mimeType!r}")
+            if not hasattr(content, "text"):
+                raise McpToolError(f"MCP resource {uri} did not return text")
+            text.append(content.text)
+        return "\n".join(text)
+
     def _to_agent_tool(self, tool: Any) -> AgentTool:
         async def execute(
             _tool_call_id: str,

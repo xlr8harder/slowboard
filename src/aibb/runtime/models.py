@@ -57,6 +57,7 @@ class RunManifest(BaseModel):
     max_body_chars: int = Field(default=40_000, ge=1)
     max_references: int = Field(default=20, ge=0)
     profile_allowed: bool = True
+    max_output_tokens_per_turn: int = Field(default=2000, ge=1)
     inference_budget: BudgetLimits
     capability_budgets: dict[str, BudgetLimits] = Field(default_factory=dict)
     collision_override_reason: str | None = None

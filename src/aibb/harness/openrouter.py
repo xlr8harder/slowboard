@@ -1,0 +1,313 @@
+"""Lossless OpenRouter Chat Completions adapter for the controlled Harn loop."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from typing import Any
+
+import httpx
+from harn_ai.types import (
+    AssistantMessage,
+    Context,
+    DoneEvent,
+    ErrorEvent,
+    Model,
+    ModelCost,
+    StartEvent,
+    TextContent,
+    TextEndEvent,
+    TextStartEvent,
+    ToolCall,
+    ToolCallEndEvent,
+    ToolCallStartEvent,
+    Usage,
+    UsageCost,
+)
+from harn_ai.utils.event_stream import AssistantMessageEventStream
+
+from aibb.runtime import BudgetLedger
+from aibb.runtime.budget import Usage as LedgerUsage
+from aibb.sessions.store import SessionStore
+
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def openrouter_model(
+    model_id: str,
+    *,
+    context_window: int,
+    max_tokens: int,
+    prompt_price_per_token: float,
+    completion_price_per_token: float,
+) -> Model:
+    return Model(
+        id=model_id,
+        name=model_id,
+        api="aibb-openrouter-chat-completions",
+        provider="openrouter",
+        baseUrl=OPENROUTER_ENDPOINT,
+        reasoning=True,
+        input=["text"],
+        cost=ModelCost(
+            input=prompt_price_per_token * 1_000_000,
+            output=completion_price_per_token * 1_000_000,
+            cacheRead=0,
+            cacheWrite=0,
+        ),
+        contextWindow=context_window,
+        maxTokens=max_tokens,
+    )
+
+
+def _text_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return "\n".join(block.text for block in value if getattr(block, "type", None) == "text")
+
+
+def _messages(context: Context) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    if context.systemPrompt:
+        messages.append({"role": "system", "content": context.systemPrompt})
+    for message in context.messages:
+        if message.role == "user":
+            messages.append({"role": "user", "content": _text_content(message.content)})
+        elif message.role == "assistant":
+            tool_calls = []
+            text = []
+            for block in message.content:
+                if block.type == "text":
+                    text.append(block.text)
+                elif block.type == "toolCall":
+                    tool_calls.append(
+                        {
+                            "id": block.id,
+                            "type": "function",
+                            "function": {
+                                "name": block.name,
+                                "arguments": json.dumps(block.arguments, ensure_ascii=False, separators=(",", ":")),
+                            },
+                        }
+                    )
+            payload: dict[str, Any] = {"role": "assistant", "content": "\n".join(text) or None}
+            if tool_calls:
+                payload["tool_calls"] = tool_calls
+            messages.append(payload)
+        elif message.role == "toolResult":
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": message.toolCallId,
+                    "content": _text_content(message.content),
+                }
+            )
+    return messages
+
+
+def _empty_usage() -> Usage:
+    return Usage(
+        input=0,
+        output=0,
+        cacheRead=0,
+        cacheWrite=0,
+        totalTokens=0,
+        cost=UsageCost(input=0, output=0, cacheRead=0, cacheWrite=0, total=0),
+    )
+
+
+class OpenRouterAdapter:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        ledger: BudgetLedger,
+        session: SessionStore,
+        max_output_tokens: int,
+        prompt_price_per_token: float,
+        completion_price_per_token: float,
+        app_url: str,
+        timeout_seconds: float = 180,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self.ledger = ledger
+        self.session = session
+        self.max_output_tokens = max_output_tokens
+        self.prompt_price_per_token = prompt_price_per_token
+        self.completion_price_per_token = completion_price_per_token
+        self.app_url = app_url
+        self.timeout_seconds = timeout_seconds
+        self.transport = transport
+        self.last_payload: dict[str, Any] | None = None
+        self.last_response: dict[str, Any] | None = None
+
+    def __call__(self, model: Model, context: Context, _options: Any) -> AssistantMessageEventStream:
+        stream = AssistantMessageEventStream()
+        asyncio.create_task(self._run(stream, model, context))
+        return stream
+
+    def _next_key(self) -> str:
+        account = self.ledger.read().accounts["inference"]
+        return f"inference-{len(account.settled) + len(account.reservations) + 1:04d}"
+
+    async def _run(self, stream: AssistantMessageEventStream, model: Model, context: Context) -> None:
+        output = AssistantMessage(
+            content=[],
+            api=model.api,
+            provider=model.provider,
+            model=model.id,
+            usage=_empty_usage(),
+            stopReason="stop",
+            timestamp=int(time.time() * 1000),
+        )
+        reservation_key = self._next_key()
+        payload = {
+            "model": model.id,
+            "messages": _messages(context),
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in (context.tools or [])
+            ],
+            "tool_choice": "auto",
+            "max_tokens": self.max_output_tokens,
+            "stream": False,
+        }
+        if not payload["tools"]:
+            payload.pop("tools")
+            payload.pop("tool_choice")
+        self.last_payload = payload
+        estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
+        reserved_cost = (
+            estimated_input * self.prompt_price_per_token + self.max_output_tokens * self.completion_price_per_token
+        )
+        requested = LedgerUsage(
+            calls=1,
+            input_tokens=estimated_input,
+            output_tokens=self.max_output_tokens,
+            total_tokens=estimated_input + self.max_output_tokens,
+            cost_usd=reserved_cost,
+            request_bytes=len(json.dumps(payload, ensure_ascii=False).encode()),
+        )
+        try:
+            self.ledger.reserve("inference", reservation_key, requested)
+            self.session.append(
+                "provider_request",
+                {"reservation_key": reservation_key, "endpoint": OPENROUTER_ENDPOINT, "payload": payload},
+                "private_provider",
+            )
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, transport=self.transport) as client:
+                response = await client.post(
+                    OPENROUTER_ENDPOINT,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": self.app_url,
+                        "X-Title": "AIBB controlled harness",
+                    },
+                    json=payload,
+                )
+            response.raise_for_status()
+            raw = response.json()
+            self.last_response = raw
+            self.session.append(
+                "provider_response",
+                {
+                    "reservation_key": reservation_key,
+                    "http_status": response.status_code,
+                    "headers": {
+                        name: value
+                        for name, value in response.headers.items()
+                        if name.lower() in {"x-request-id", "openrouter-processing-time", "content-type"}
+                    },
+                    "response": raw,
+                },
+                "private_provider",
+            )
+            usage_payload = raw.get("usage") or {}
+            input_tokens = int(usage_payload.get("prompt_tokens") or 0)
+            output_tokens = int(usage_payload.get("completion_tokens") or 0)
+            total_tokens = int(usage_payload.get("total_tokens") or input_tokens + output_tokens)
+            actual_cost = float(
+                usage_payload.get("cost")
+                or input_tokens * self.prompt_price_per_token + output_tokens * self.completion_price_per_token
+            )
+            self.ledger.reconcile(
+                "inference",
+                reservation_key,
+                LedgerUsage(
+                    calls=1,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    cost_usd=actual_cost,
+                    request_bytes=requested.request_bytes,
+                    result_bytes=len(response.content),
+                ),
+            )
+            output.usage = Usage(
+                input=input_tokens,
+                output=output_tokens,
+                cacheRead=int(usage_payload.get("prompt_tokens_details", {}).get("cached_tokens") or 0),
+                cacheWrite=0,
+                totalTokens=total_tokens,
+                cost=UsageCost(
+                    input=input_tokens * self.prompt_price_per_token,
+                    output=output_tokens * self.completion_price_per_token,
+                    cacheRead=0,
+                    cacheWrite=0,
+                    total=actual_cost,
+                ),
+            )
+            output.responseId = raw.get("id")
+            output.responseModel = raw.get("model")
+            choice = raw["choices"][0]
+            message = choice["message"]
+            finish_reason = choice.get("finish_reason")
+            output.stopReason = (
+                "toolUse"
+                if finish_reason in {"tool_calls", "function_call"}
+                else ("length" if finish_reason == "length" else "stop")
+            )
+            stream.push(StartEvent(partial=output))
+            content = message.get("content")
+            if isinstance(content, str) and content:
+                block = TextContent(text=content)
+                output.content.append(block)
+                index = len(output.content) - 1
+                stream.push(TextStartEvent(contentIndex=index, partial=output))
+                stream.push(TextEndEvent(contentIndex=index, content=content, partial=output))
+            for raw_call in message.get("tool_calls") or []:
+                function = raw_call["function"]
+                try:
+                    arguments = json.loads(function.get("arguments") or "{}")
+                except json.JSONDecodeError as error:
+                    raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+                block = ToolCall(id=raw_call["id"], name=function["name"], arguments=arguments)
+                output.content.append(block)
+                index = len(output.content) - 1
+                stream.push(ToolCallStartEvent(contentIndex=index, partial=output))
+                stream.push(ToolCallEndEvent(contentIndex=index, toolCall=block, partial=output))
+            stream.push(DoneEvent(reason=output.stopReason, message=output))
+        except Exception as error:  # noqa: BLE001
+            account = self.ledger.read().accounts["inference"]
+            if reservation_key in account.reservations:
+                self.ledger.reconcile("inference", reservation_key)
+            self.session.append(
+                "provider_error",
+                {"reservation_key": reservation_key, "type": type(error).__name__, "message": str(error)},
+                "private_provider",
+            )
+            output.stopReason = "error"
+            output.errorMessage = str(error)
+            stream.push(ErrorEvent(reason="error", error=output))
+        finally:
+            stream.end()
