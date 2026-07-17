@@ -74,13 +74,21 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
             },
         }
     )
+    renderer.render(
+        {
+            "type": "provider_error",
+            "payload": {"type": "HTTPStatusError", "message": "503 limited availability"},
+        }
+    )
     renderer.render({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}})
 
     rendered = output.getvalue()
+    assert "Provider-exposed reasoning" in rendered
     assert "Example Model" in rendered
     assert "images: gated" in rendered
-    assert "Reasoning summary" in rendered
     assert "read_slowboard_thread" in rendered
     assert "read “A test thread” · 1 of 1 contributions" in rendered
     assert "120 tokens · $0.0100" in rendered
+    assert "503 limited availability" in rendered
+    assert "request reservation was released" in rendered
     assert "run completed · model_concluded_visit" in rendered

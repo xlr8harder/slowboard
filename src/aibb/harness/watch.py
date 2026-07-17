@@ -150,7 +150,11 @@ class RunEventRenderer:
         reasoning = message.get("reasoning")
         if self.show_reasoning and isinstance(reasoning, str) and reasoning.strip():
             self.console.print(
-                Panel(Markdown(_shorten(reasoning, 4_000)), title="Reasoning summary", border_style="dim")
+                Panel(
+                    Markdown(_shorten(reasoning, 4_000)),
+                    title="Provider-exposed reasoning",
+                    border_style="dim",
+                )
             )
         content = _message_text(message.get("content"))
         if content.strip():
@@ -209,6 +213,19 @@ class RunEventRenderer:
             self.console.print(Rule(f"Inference turn {self.provider_turn} · {timestamp}", style="blue"))
         elif event_type == "provider_response":
             self._render_provider_response(payload)
+        elif event_type == "provider_error":
+            error_type = escape(str(payload.get("type") or "ProviderError"))
+            message = escape(_shorten(str(payload.get("message") or "Unknown provider failure"), 2_000))
+            self.console.print(
+                Panel(
+                    (
+                        f"[bold]{error_type}[/bold]\n{message}\n\n"
+                        "The request reservation was released; the run remains intact."
+                    ),
+                    title="Provider error",
+                    border_style="red",
+                )
+            )
         elif "compaction" in event_type:
             self.console.print(f"[bold blue]{escape(event_type.replace('_', ' '))}[/bold blue]")
             self.console.print(Pretty(_bounded(payload)), style="dim")
