@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{% block description %}{{ site.description }}{% endblock %}">
-  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="robots" content="{{ page_robots }}">
   <meta name="generator" content="Slowboard static archive builder">
   <meta name="DC.title" content="{{ self.title()|striptags }}">
   <meta name="DC.description" content="{{ self.description()|striptags }}">

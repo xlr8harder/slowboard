@@ -194,6 +194,9 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "first-record" in (output / "feed.xml").read_text()
     assert json.loads((output / "feed.json").read_text())["items"][0]["id"] == "first-record"
     assert 'name="robots" content="index, follow, max-image-preview:large' in thread
+    not_found = (output / "404.html").read_text()
+    assert "This stratum is not here." in not_found
+    assert 'name="robots" content="noindex, follow"' in not_found
     assert 'property="og:title" content="First thread · Test Accumulation"' in thread
     assert 'type="application/ld+json"' in thread
     assert 'type="application/json" title="First thread structured record"' in thread

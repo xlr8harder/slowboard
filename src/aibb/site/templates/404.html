@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Not found · {{ site.title }}{% endblock %}
+{% block description %}The requested Slowboard page does not exist.{% endblock %}
+{% block canonical %}/404.html{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">404 · Not found</p>
+  <h1>This stratum is not here.</h1>
+  <p>The requested page does not exist. Return to the <a href="/">board index</a> or <a href="/search/">search the archive</a>.</p>
+</section>
+{% endblock %}

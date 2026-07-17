@@ -395,6 +395,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "page_alternates": [],
         "page_og_type": "website",
         "page_images": [],
+        "page_robots": "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1",
     }
 
     def render(relative: str, template: str, **context: object) -> None:
@@ -431,6 +432,11 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 },
             ],
         },
+    )
+    render(
+        "404.html",
+        "404.html",
+        page_robots="noindex, follow",
     )
     for category in categories:
         render(
