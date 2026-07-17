@@ -15,6 +15,7 @@ from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
+from aibb.harness.watch import latest_run_directory, watch_event_stream
 from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.runtime import RunManifest
 from aibb.site import build_site
@@ -32,6 +33,34 @@ def main() -> None:
 
 def _default_code_repo() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+@app.command("watch-run")
+def watch_run(
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root", exists=True, file_okay=False, resolve_path=True),
+    ] = Path("../aibb-state"),
+    run_id: Annotated[str | None, typer.Option("--run-id", help="Run ID; defaults to the newest run.")] = None,
+    follow: Annotated[bool, typer.Option("--follow/--no-follow")] = True,
+    from_start: Annotated[bool, typer.Option("--from-start/--new-events-only")] = True,
+    show_reasoning: Annotated[bool, typer.Option("--show-reasoning/--hide-reasoning")] = True,
+) -> None:
+    """Watch a private run as a readable local transcript of reasoning, tools, and usage."""
+
+    run_dir = state_root / run_id if run_id else latest_run_directory(state_root)
+    if not (run_dir / "manifest.json").exists():
+        raise typer.BadParameter(f"Unknown run: {run_dir.name}")
+    typer.echo(f"Watching {run_dir.name} from {run_dir / 'session/events.jsonl'}")
+    try:
+        watch_event_stream(
+            run_dir,
+            follow=follow,
+            from_start=from_start,
+            show_reasoning=show_reasoning,
+        )
+    except KeyboardInterrupt:
+        typer.echo("Stopped watching; the model run was not interrupted.")
 
 
 @publish_app.command("prepare")
@@ -284,6 +313,13 @@ def run_model(
             help="Explicitly authorize a model run against the production data lane.",
         ),
     ] = False,
+    enable_images: Annotated[
+        bool,
+        typer.Option(
+            "--enable-images",
+            help="Explicitly expose image generation/import for this run; disabled by default.",
+        ),
+    ] = False,
     image_generation_model: Annotated[
         str | None,
         typer.Option(
@@ -322,7 +358,11 @@ def run_model(
     else:
         catalog = asyncio.run(fetch_openrouter_model(model))
         image_input_supported = catalog.supports_image_input if image_input == "auto" else image_input == "allow"
-        if image_input_supported and image_generation_model and max_generated_images:
+        if enable_images and not image_input_supported:
+            raise typer.BadParameter(
+                "--enable-images requires catalog-advertised image input or an explicit --image-input allow override"
+            )
+        if enable_images and image_input_supported and image_generation_model and max_generated_images:
             asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=api_key))
         effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
         effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
@@ -355,9 +395,10 @@ def run_model(
             reasoning=catalog.select_reasoning(),
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
-            image_generation_model=image_generation_model if image_input_supported else None,
-            max_generated_images=max_generated_images if image_input_supported else 0,
-            max_imported_images=max_imported_images if image_input_supported else 0,
+            image_capabilities_enabled=enable_images,
+            image_generation_model=image_generation_model if enable_images else None,
+            max_generated_images=max_generated_images if enable_images else 0,
+            max_imported_images=max_imported_images if enable_images else 0,
             max_image_cost_usd=max_image_cost_usd,
         )
         run_id = manifest.run_id
@@ -374,7 +415,8 @@ def run_model(
                     "max_cost_usd": effective_cost_usd,
                     "image_input_supported": image_input_supported,
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
-                    "image_generation_model": image_generation_model if image_input_supported else None,
+                    "image_capabilities_enabled": enable_images,
+                    "image_generation_model": image_generation_model if enable_images else None,
                     "developer": catalog.developer,
                     "reasoning": catalog.select_reasoning().model_dump(mode="json"),
                     "publication_lane": site.environment,

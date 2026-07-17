@@ -257,6 +257,7 @@ class ArchiveMcpState:
             "read_only": self.read_only,
             "curator_profile_id": self._curator_profile_id(corpus),
             "image_capabilities": {
+                "enabled_by_curator": self.manifest.image_capabilities_enabled,
                 "input_supported": self.manifest.image_input_supported,
                 "input_detection": self.manifest.image_input_source,
                 "generation_model": self.manifest.image_generation_model,

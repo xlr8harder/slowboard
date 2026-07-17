@@ -153,7 +153,7 @@ class ImageCapabilityState:
 
     @property
     def enabled(self) -> set[str]:
-        if not self.manifest.image_input_supported:
+        if not self.manifest.image_capabilities_enabled or not self.manifest.image_input_supported:
             return set()
         names = set()
         if "generate_image" in self.manifest.capability_budgets and self.manifest.image_generation_model:

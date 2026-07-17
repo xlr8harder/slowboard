@@ -85,6 +85,7 @@ class RunManifest(BaseModel):
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
     image_input_supported: bool = False
     image_input_source: Literal["catalog", "curator-override"] = "catalog"
+    image_capabilities_enabled: bool = False
     image_generation_model: str | None = Field(default=None, min_length=1, max_length=240)
     max_images_per_contribution: int = Field(default=4, ge=0, le=12)
     compaction_policy: Literal["deny", "ask", "allow"] = "ask"

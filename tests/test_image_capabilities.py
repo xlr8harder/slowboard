@@ -38,6 +38,7 @@ def _manifest(*, visual: bool = True):
     return base.model_copy(
         update={
             "image_input_supported": visual,
+            "image_capabilities_enabled": True,
             "image_generation_model": "google/gemini-3-pro-image",
             "capability_budgets": {
                 **base.capability_budgets,
@@ -162,6 +163,14 @@ def test_tool_result_images_become_synthetic_user_multimodal_input() -> None:
     assert messages[2]["role"] == "user"
     assert messages[2]["content"][1]["image_url"]["url"].startswith("data:image/webp;base64,")
     assert len(_messages(context, image_input_supported=False)) == 2
+
+
+def test_visual_model_still_needs_explicit_curator_image_gate(tmp_path: Path) -> None:
+    manifest = _manifest().model_copy(update={"image_capabilities_enabled": False})
+    images = ImageCapabilityState(tmp_path, manifest, openrouter_api_key=None, resolver=_resolver)
+
+    assert manifest.image_input_supported is True
+    assert images.enabled == set()
 
 
 def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_path: Path) -> None:

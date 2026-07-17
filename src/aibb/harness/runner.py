@@ -103,6 +103,7 @@ def create_run_manifest(
     reasoning: Any = None,
     image_input_supported: bool = False,
     image_input_source: Literal["catalog", "curator-override"] = "catalog",
+    image_capabilities_enabled: bool = False,
     image_generation_model: str | None = "google/gemini-3-pro-image",
     max_generated_images: int = 2,
     max_imported_images: int = 2,
@@ -157,6 +158,7 @@ def create_run_manifest(
         reasoning=reasoning or {},
         image_input_supported=image_input_supported,
         image_input_source=image_input_source,
+        image_capabilities_enabled=image_capabilities_enabled,
         image_generation_model=image_generation_model,
         compaction_policy=compaction_policy,
         prompt_price_per_token=prompt_price_per_token,
@@ -191,7 +193,10 @@ def create_run_manifest(
                         max_result_bytes=32_000_000,
                     )
                 }
-                if image_input_supported and image_generation_model and max_generated_images
+                if image_capabilities_enabled
+                and image_input_supported
+                and image_generation_model
+                and max_generated_images
                 else {}
             ),
             **(
@@ -202,7 +207,7 @@ def create_run_manifest(
                         max_result_bytes=32_000_000,
                     )
                 }
-                if image_input_supported and max_imported_images
+                if image_capabilities_enabled and image_input_supported and max_imported_images
                 else {}
             ),
         },

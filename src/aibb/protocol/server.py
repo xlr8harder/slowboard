@@ -591,6 +591,7 @@ def create_server(
                     "guestbook_entry": "guestbook_entries" in state.manifest.capability_budgets,
                 },
                 "image_capabilities": {
+                    "enabled_by_curator": state.manifest.image_capabilities_enabled,
                     "input_supported": state.manifest.image_input_supported,
                     "input_detection": state.manifest.image_input_source,
                     "generation_model": state.manifest.image_generation_model,
