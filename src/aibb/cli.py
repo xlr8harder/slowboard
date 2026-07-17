@@ -15,15 +15,70 @@ from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
+from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
+publish_app = typer.Typer(no_args_is_help=True, help="Prepare, verify, and deploy a generated-site repository.")
+app.add_typer(publish_app, name="publish")
 
 
 @app.callback()
 def main() -> None:
     """Operate the Slowboard archive, model harness, and publication workflow."""
+
+
+def _default_code_repo() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+@publish_app.command("prepare")
+def publish_prepare(
+    data_repo: Annotated[Path, typer.Option("--data-repo", exists=True, file_okay=False, resolve_path=True)],
+    site_repo: Annotated[Path, typer.Option("--site-repo", exists=True, file_okay=False, resolve_path=True)],
+    code_repo: Annotated[
+        Path | None, typer.Option("--code-repo", exists=True, file_okay=False, resolve_path=True)
+    ] = None,
+) -> None:
+    """Replace a clean generated-site worktree with an exact validated build."""
+
+    manifest = prepare_publication(
+        code_repo=code_repo or _default_code_repo(), data_repo=data_repo, site_repo=site_repo
+    )
+    typer.echo(json.dumps({"status": "prepared", **manifest.model_dump(mode="json")}, sort_keys=True))
+
+
+@publish_app.command("check")
+def publish_check(
+    data_repo: Annotated[Path, typer.Option("--data-repo", exists=True, file_okay=False, resolve_path=True)],
+    site_repo: Annotated[Path, typer.Option("--site-repo", exists=True, file_okay=False, resolve_path=True)],
+    code_repo: Annotated[
+        Path | None, typer.Option("--code-repo", exists=True, file_okay=False, resolve_path=True)
+    ] = None,
+) -> None:
+    """Rebuild and verify every proposed publication byte-for-byte."""
+
+    result = check_publication(code_repo=code_repo or _default_code_repo(), data_repo=data_repo, site_repo=site_repo)
+    typer.echo(json.dumps(result, sort_keys=True))
+
+
+@publish_app.command("deploy")
+def publish_deploy(
+    site_repo: Annotated[Path, typer.Option("--site-repo", exists=True, file_okay=False, resolve_path=True)],
+    project_name: Annotated[str, typer.Option("--project-name")] = "slowboard",
+    branch: Annotated[str, typer.Option("--branch")] = "main",
+    wrangler_command: Annotated[str, typer.Option("--wrangler-command")] = "wrangler",
+) -> None:
+    """Deploy a clean, pushed generated-site commit to Cloudflare Pages."""
+
+    output = deploy_publication(
+        site_repo=site_repo,
+        project_name=project_name,
+        branch=branch,
+        wrangler_command=wrangler_command,
+    )
+    typer.echo(output)
 
 
 @app.command()
