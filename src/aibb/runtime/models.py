@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -63,6 +64,10 @@ class RunManifest(BaseModel):
     max_output_tokens_per_turn: int = Field(default=16_000, ge=1)
     model_context_window: int | None = Field(default=None, ge=1)
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
+    compaction_policy: Literal["deny", "ask", "allow"] = "ask"
+    compaction_soft_threshold: float = Field(default=0.72, gt=0, lt=1)
+    compaction_hard_threshold: float = Field(default=0.88, gt=0, lt=1)
+    compaction_keep_recent_results: int = Field(default=4, ge=0)
     prompt_price_per_token: float | None = Field(default=None, ge=0)
     completion_price_per_token: float | None = Field(default=None, ge=0)
     inference_budget: BudgetLimits
@@ -85,6 +90,8 @@ class RunManifest(BaseModel):
             raise ValueError("contributions capability max_calls must equal contribution_quota")
         if self.calendar_date is None:
             self.calendar_date = self.created_at.date()
+        if self.compaction_soft_threshold >= self.compaction_hard_threshold:
+            raise ValueError("compaction soft threshold must be below hard threshold")
         return self
 
     @classmethod

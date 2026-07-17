@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +20,7 @@ from rich.console import Console
 
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_model
+from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
 from aibb.harness.context import build_context_envelope
 from aibb.harness.engine import AibbHarnessEngine
 from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
@@ -79,6 +82,7 @@ def create_run_manifest(
     generation: str,
     lineage: str,
     mode: Literal["interactive", "headless"],
+    compaction_policy: Literal["deny", "ask", "allow"],
     contribution_quota: int,
     max_output_tokens: int,
     max_provider_turns: int,
@@ -130,6 +134,7 @@ def create_run_manifest(
         max_output_tokens_per_turn=max_output_tokens,
         model_context_window=model_context_window,
         model_max_completion_tokens=model_max_completion_tokens,
+        compaction_policy=compaction_policy,
         prompt_price_per_token=prompt_price_per_token,
         completion_price_per_token=completion_price_per_token,
         inference_budget=BudgetLimits(
@@ -188,6 +193,26 @@ def _turn_boundary_outcome(
     if manifest.mode == "headless":
         return "headless_suspended"
     return "interactive"
+
+
+def _context_fraction(manifest: RunManifest, engine: AibbHarnessEngine) -> float | None:
+    if not manifest.model_context_window:
+        return None
+    used = estimate_message_tokens(engine.snapshot().messages)
+    reserved = min(manifest.max_output_tokens_per_turn, manifest.model_context_window)
+    return min(1.0, (used + reserved) / manifest.model_context_window)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}-", suffix=".tmp", delete=False
+    ) as stream:
+        temporary_path = Path(stream.name)
+        stream.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary_path, path)
 
 
 async def _terminal_readline(prompt: str) -> str:
@@ -350,8 +375,67 @@ async def run_openrouter_visit(
                 console.print("\n[bold cyan]Model[/bold cyan]")
                 console.print(response_text)
 
+        def compact(*, authorization: Literal["curator", "manifest-allow"]) -> bool:
+            nonlocal engine
+            snapshot = engine.snapshot()
+            source_sequence = len(store.read_events())
+            result = compact_archive_results(
+                snapshot,
+                run_id=manifest.run_id,
+                authorization=authorization,
+                source_event_sequence=source_sequence,
+                keep_recent_results=manifest.compaction_keep_recent_results,
+            )
+            if result is None:
+                console.print("No older archive results are currently eligible for compaction.")
+                return False
+            compacted, artifact = result
+            artifact_path = (
+                run_dir / "session/compactions" / f"generation-{compacted.context_generation}.json"
+            )
+            _atomic_write_json(artifact_path, artifact.model_dump(mode="json"))
+            store.append(
+                "compaction_applied",
+                {
+                    "artifact": str(artifact_path.relative_to(run_dir)),
+                    "authorization": authorization,
+                    "elided_results": len(artifact.elisions),
+                    "estimated_tokens_before": artifact.estimated_tokens_before,
+                    "estimated_tokens_after": artifact.estimated_tokens_after,
+                    "result_messages_sha256": artifact.result_messages_sha256,
+                },
+                "operator",
+            )
+            engine = AibbHarnessEngine.from_snapshot(compacted, tools=tools, stream_fn=adapter)
+            engine.agent.subscribe(lambda event, _signal: _record_agent_event(store, event))
+            store.write_checkpoint(engine.snapshot())
+            console.print(
+                "Compacted "
+                f"{len(artifact.elisions)} archive results "
+                f"(~{artifact.estimated_tokens_before:,} to ~{artifact.estimated_tokens_after:,} context tokens)."
+            )
+            return True
+
+        def maybe_compact() -> None:
+            fraction = _context_fraction(manifest, engine)
+            if fraction is None or fraction < manifest.compaction_soft_threshold:
+                return
+            percentage = fraction * 100
+            if manifest.compaction_policy == "allow":
+                compact(authorization="manifest-allow")
+            elif manifest.compaction_policy == "ask":
+                console.print(
+                    f"Context is approximately {percentage:.0f}% full. "
+                    "Use :compact at a safe turn boundary to elide older archive reads."
+                )
+            elif fraction >= manifest.compaction_hard_threshold:
+                console.print(
+                    f"Context is approximately {percentage:.0f}% full and compaction is denied by this run manifest."
+                )
+
         if opening is not None or manifest.mode == "headless":
             await send(opening, allow_queued_input=False)
+            maybe_compact()
             outcome = _turn_boundary_outcome(manifest, run_dir, once=once)
             if outcome == "model_completed":
                 store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
@@ -367,17 +451,26 @@ async def run_openrouter_visit(
                 store.write_checkpoint(engine.snapshot())
                 return manifest.run_id
 
-        console.print("Commands: :begin, :status, :suspend, :complete. Other text is sent as a curator message.")
+        console.print(
+            "Commands: :begin, :status, :compact, :suspend, :complete. "
+            "Other text is sent as a curator message."
+        )
         while True:
             line = await _terminal_readline("curator> ")
             if line == ":begin":
                 await send(None, allow_queued_input=True)
+                maybe_compact()
                 if _turn_boundary_outcome(manifest, run_dir, once=False) == "model_completed":
                     store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
                     store.write_checkpoint(engine.snapshot())
                     return manifest.run_id
             elif line == ":status":
-                console.print(ledger.remaining())
+                console.print({"budgets": ledger.remaining(), "context_fraction": _context_fraction(manifest, engine)})
+            elif line == ":compact":
+                if manifest.compaction_policy == "deny":
+                    console.print("Compaction is denied by this run manifest.")
+                else:
+                    compact(authorization="curator")
             elif line == ":suspend":
                 store.append("run_suspended", {"reason": "curator"}, "operator")
                 store.write_checkpoint(engine.snapshot())
@@ -390,6 +483,7 @@ async def run_openrouter_visit(
                 console.print("Unknown local command")
             elif line.strip():
                 await send(line, allow_queued_input=True)
+                maybe_compact()
                 if _turn_boundary_outcome(manifest, run_dir, once=False) == "model_completed":
                     store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
                     store.write_checkpoint(engine.snapshot())

@@ -149,6 +149,13 @@ def run_model(
     generation: Annotated[str, typer.Option("--generation")] = "5.6",
     lineage: Annotated[str, typer.Option("--lineage")] = "GPT",
     mode: Annotated[Literal["interactive", "headless"], typer.Option("--mode")] = "interactive",
+    compaction_policy: Annotated[
+        Literal["deny", "ask", "allow"] | None,
+        typer.Option(
+            "--compaction-policy",
+            help="Context compaction policy; defaults to ask interactively and deny headlessly.",
+        ),
+    ] = None,
     contribution_quota: Annotated[int, typer.Option("--contribution-quota", min=0, max=20)] = 5,
     max_output_tokens: Annotated[int, typer.Option("--max-output-tokens", min=64)] = 16_000,
     max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 40,
@@ -191,6 +198,7 @@ def run_model(
             generation=generation,
             lineage=lineage,
             mode=mode,
+            compaction_policy=compaction_policy or ("deny" if mode == "headless" else "ask"),
             contribution_quota=contribution_quota,
             max_output_tokens=effective_output_tokens,
             max_provider_turns=max_provider_turns,
