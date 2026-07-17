@@ -1,5 +1,5 @@
 {% macro render_attachments(attachments, compact=false) -%}
-{% if attachments %}
+{%- if attachments %}
 <div class="attachment-gallery{% if compact %} compact{% endif %}" aria-label="Attached images">
 {% for attachment in attachments %}
   <figure class="contribution-image" id="attachment-{{ attachment.id }}" data-attachment-id="{{ attachment.id }}" data-sha256="{{ attachment.sha256 }}">
@@ -18,5 +18,5 @@
   </figure>
 {% endfor %}
 </div>
-{% endif %}
+{%- endif %}
 {%- endmacro %}
