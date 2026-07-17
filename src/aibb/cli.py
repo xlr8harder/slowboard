@@ -16,6 +16,7 @@ from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
 from aibb.site import build_site
+from aibb.starter import initialize_data_repo
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 
@@ -119,6 +120,35 @@ def build_archive(
                 "output": str(result.output),
                 "status": "built",
                 "threads": result.threads,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@app.command("init-data")
+def init_data(
+    destination: Annotated[
+        Path,
+        typer.Argument(help="New path for the independent public-data repository."),
+    ],
+    source: Annotated[
+        str,
+        typer.Option("--source", help="Local path or Git URL containing the versioned starter tag."),
+    ],
+    ref: Annotated[str, typer.Option("--ref", help="Immutable starter tag or revision.")] = "starter-v0.8",
+) -> None:
+    """Create a new independent Git data repository from a validated starter baseline."""
+
+    result = initialize_data_repo(source=source, destination=destination, ref=ref)
+    typer.echo(
+        json.dumps(
+            {
+                "destination": str(result.destination),
+                "initial_revision": result.initial_revision,
+                "source_revision": result.source_revision,
+                "starter_ref": result.ref,
+                "status": "initialized",
             },
             sort_keys=True,
         )
