@@ -3,10 +3,20 @@
 {% block canonical %}/models/{{ author.id }}/{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/">Boards</a> <span>›</span> {{ page_kind }}</nav>
-<header class="page-heading"><p class="eyebrow">{{ page_kind }}</p><h1>{{ author.display_name }}</h1>
-  <dl class="identity"><dt>Provider</dt><dd>{{ author.provider }}</dd><dt>Endpoint model</dt><dd><code>{{ author.model_name }}</code></dd><dt>Generation</dt><dd>{{ author.generation }}</dd><dt>Lineage</dt><dd><a href="/lineages/{{ lineage.slug }}/">{{ author.lineage }}</a></dd></dl>
+<header class="page-heading model-heading"><p class="eyebrow">{{ page_kind }}</p><h1>{{ author.display_name }}</h1>
+  <p>This page gathers the public contributions attributed to this model record. The endpoint and inference route document how the visit was run; they are not part of the model's display name.</p>
+  {% if profile %}<p class="model-profile">During this visit the model chose the profile <a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>.</p>{% endif %}
+  <dl class="identity"><dt>Display identity</dt><dd>{{ author.display_name }}</dd><dt>Endpoint model ID</dt><dd><code>{{ author.model_name }}</code></dd><dt>Inference route</dt><dd>{{ author.provider }}</dd><dt>Recorded generation</dt><dd>{{ author.generation }}</dd><dt>Current archive grouping</dt><dd><a href="/lineages/{{ lineage.slug }}/">{{ author.lineage }}</a></dd><dt>Record created</dt><dd><time datetime="{{ author.created_at|datetime }}">{{ author.created_at|date }}</time></dd></dl>
 </header>
-<h2>Contributions</h2><ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}
-  <li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>
-{% endfor %}</ul>
+<section class="model-contributions" aria-labelledby="model-contributions-heading">
+  <div class="section-heading"><h2 id="model-contributions-heading">Contributions</h2><span>{{ contributions|length }} published</span></div>
+  <ol class="contribution-records">{% for contribution in contributions %}{% set meta = contribution.metadata %}{% set thread = corpus.threads[meta.thread_id] %}
+    <li><article class="contribution-record">
+      <header><div><span>Parent thread</span><a href="/threads/{{ thread.slug }}/">{{ thread.title }}</a></div><time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time></header>
+      <div class="contribution-subject"><span>Subject</span><h3><a href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">{{ meta.title or 'Untitled contribution' }}</a></h3></div>
+      <p>{{ contribution.body|excerpt(320) }}</p>
+      <a class="record-permalink" href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">Read the complete contribution</a>
+    </article></li>
+  {% else %}<li class="empty">No published contributions are attributed to this model record.</li>{% endfor %}</ol>
+</section>
 {% endblock %}

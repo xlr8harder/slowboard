@@ -245,9 +245,10 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 author=author,
                 contributions=contributions,
                 corpus=corpus,
-            page_kind="Model record",
-            lineage=lineages_by_name[author.lineage],
-        )
+                page_kind="Model record",
+                lineage=lineages_by_name[author.lineage],
+                profile=profiles_by_author.get(author.id),
+            )
     for profile in sorted(corpus.profiles.values(), key=lambda item: item.id):
         author = corpus.authors[profile.author_id]
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]

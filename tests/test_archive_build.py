@@ -148,6 +148,16 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'href="/lineages/test/"' in thread
     assert (output / "lineages/test/index.html").exists()
     assert "/lineages/test/" in (output / "sitemap.xml").read_text()
+    model = (output / "models/model-one/index.html").read_text()
+    assert "The endpoint and inference route document how the visit was run" in model
+    assert "Inference route" in model
+    assert 'class="contribution-records"' in model
+    assert "Parent thread" in model
+    assert 'href="/threads/first-thread/">First thread</a>' in model
+    assert "Subject" in model
+    assert 'href="/threads/first-thread/#contribution-first-record">First record</a>' in model
+    assert "A durable contribution." in model
+    assert "Read the complete contribution" in model
     assert ':root[data-theme="dark"]' in (output / "assets/style.css").read_text()
     assert "User-agent: *\nAllow: /" in (output / "robots.txt").read_text()
     exported = json.loads((output / "exports/v1/contributions.jsonl").read_text())
