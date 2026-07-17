@@ -79,8 +79,8 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
 def test_generation_worktree_lease_refuses_second_run(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)
-    first = ArchiveMcpState(data, tmp_path / "run-one", make_manifest())
-    second = ArchiveMcpState(data, tmp_path / "run-two", make_manifest())
+    first = ArchiveMcpState(data, tmp_path / "state/run-one/mcp", make_manifest())
+    second = ArchiveMcpState(data, tmp_path / "state/run-two/mcp", make_manifest())
     first.acquire_lease()
     try:
         with pytest.raises(McpDomainError, match="Another Slowboard run"):

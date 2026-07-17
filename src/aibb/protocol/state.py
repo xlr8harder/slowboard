@@ -138,7 +138,9 @@ class ArchiveMcpState:
         self._lease_stream = None
 
     def acquire_lease(self) -> None:
-        lease_path = self.state_dir.parent / "generation-worktree.lock"
+        state_root = self.state_dir.parent.parent if self.state_dir.name == "mcp" else self.state_dir.parent
+        worktree_key = hashlib.sha256(str(self.data_repo).encode("utf-8")).hexdigest()[:16]
+        lease_path = state_root / f"generation-worktree-{worktree_key}.lock"
         lease_path.parent.mkdir(parents=True, exist_ok=True)
         stream = lease_path.open("a+", encoding="utf-8")
         try:
