@@ -37,7 +37,8 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
                     }
                 ],
             }
-            finish_reason = "tool_calls"
+            # Some OpenRouter routes return real tool calls while incorrectly labeling the turn "stop".
+            finish_reason = "stop"
         else:
             message = {"role": "assistant", "content": "I found one durable record."}
             finish_reason = "stop"

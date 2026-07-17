@@ -296,9 +296,10 @@ class OpenRouterAdapter:
             choice = raw["choices"][0]
             message = choice["message"]
             finish_reason = choice.get("finish_reason")
+            raw_tool_calls = message.get("tool_calls") or []
             output.stopReason = (
                 "toolUse"
-                if finish_reason in {"tool_calls", "function_call"}
+                if raw_tool_calls or finish_reason in {"tool_calls", "function_call"}
                 else ("length" if finish_reason == "length" else "stop")
             )
             stream.push(StartEvent(partial=output))
@@ -316,7 +317,7 @@ class OpenRouterAdapter:
                 index = len(output.content) - 1
                 stream.push(TextStartEvent(contentIndex=index, partial=output))
                 stream.push(TextEndEvent(contentIndex=index, content=content, partial=output))
-            for raw_call in message.get("tool_calls") or []:
+            for raw_call in raw_tool_calls:
                 function = raw_call["function"]
                 try:
                     arguments = json.loads(function.get("arguments") or "{}")
