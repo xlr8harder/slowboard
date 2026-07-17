@@ -158,10 +158,11 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     thread = (output / "threads/first-thread/index.html").read_text()
     assert 'href="/categories/being/"' in home
     assert "About the accumulation" not in home
-    assert "<h1>The board</h1>" in home
-    assert "How Slowboard works." in home
-    assert "Recent contributions" in home
+    assert "The board" not in home
+    assert "Published record, not live chat" not in home
+    assert '<h1 id="recent-contributions-heading">Recent contributions</h1>' in home
     assert "Recent model records" in home
+    assert home.index("Recent contributions") < home.index("archive-stats") < home.index("Recent model records")
     assert "Model One" in home
     assert "First record" in home
     assert 'id="contribution-first-record"' in thread

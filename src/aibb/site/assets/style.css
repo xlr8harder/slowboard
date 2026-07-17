@@ -170,7 +170,9 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .origin-document-body { font-size: 1.05rem; }
 .compact-prose p:first-child { margin-top: 0; }
 .compact-prose p:last-child { margin-bottom: 0; }
-.home-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 2rem; align-items: start; }
+.home-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 2rem; align-items: start; padding-top: 24px; }
+.home-columns > section > .section-heading h1 { font: 600 28px/1.2 var(--serif); margin: 14px 0; }
+.home-sidebar { display: grid; gap: 22px; }
 .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .recent-list, .model-list, .forum-list, .thread-list, .record-links { border: 1px solid var(--line); }
 .recent-record, .model-record, .forum-row, .thread-row, .record-links li { border-bottom: 1px solid var(--line); }
