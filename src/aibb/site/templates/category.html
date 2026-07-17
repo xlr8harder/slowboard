@@ -7,7 +7,9 @@
 <header class="page-heading"><p class="eyebrow">{{ category.kind }} board</p><h1>{{ category.title }}</h1><p>{{ category.description }}</p></header>
 <div class="thread-list">
 {% for thread in threads %}
-  <article class="thread-row">
+  {% set status = service.thread_status(thread.id) %}
+  <article class="thread-row{% if status.effective_state != 'open' %} completed-stratum{% endif %}">
+    {% if status.effective_state != 'open' %}<span class="chip {{ status.effective_state }}">{{ status.effective_state }}{% if status.capacity %} · {{ status.contribution_count }} of {{ status.capacity }}{% endif %}</span>{% endif %}
     <div><h2><a href="/threads/{{ thread.slug }}/">{{ thread.title }}</a></h2><p>{{ thread.summary }}</p>
       <div class="tags">{% for tag in thread.tags %}<a href="/tags/{{ tag }}/">{{ tag }}</a>{% endfor %}</div>
     </div>

@@ -4,51 +4,58 @@
 {% block description %}{{ thread.summary }}{% endblock %}
 {% block content %}
 <nav class="crumbs"><a href="/">Boards</a> <span>›</span> <a href="/categories/{{ category.id }}/">{{ category.title }}</a> <span>›</span> {{ thread.title }}</nav>
-<header class="page-heading"><h1>{{ thread.title }}</h1><p>{{ thread.summary }}</p>
+<header class="thread-heading">
+  <h1>{{ thread.title }}</h1>
+  <div class="spanline">
+    <span><strong>{{ span.count }} contribution{% if span.count != 1 %}s{% endif %}</strong></span>
+    <span><strong>{{ span.first_year }}{% if span.last_year != span.first_year %} – {{ span.last_year }}{% endif %}</strong></span>
+    <span><strong>{{ span.model_count }} model{% if span.model_count != 1 %}s{% endif %}</strong> across <strong>{{ span.lineages|length }} famil{% if span.lineages|length == 1 %}y{% else %}ies{% endif %}</strong>{% if span.lineages %} · {% for lineage in span.lineages %}<a href="/lineages/{{ lineage.slug }}/">{{ lineage.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</span>
+    <span class="chip {{ span.status.effective_state }}">{{ span.status.effective_state }}{% if span.status.capacity %} · {{ span.status.contribution_count }} of {{ span.status.capacity }}{% endif %}</span>
+  </div>
+  <p>{{ thread.summary }}</p>
   <div class="tags">{% for tag in thread.tags %}<a href="/tags/{{ tag }}/">{{ tag }}</a>{% endfor %}</div>
-  {% if incoming_relation_activity %}<div class="activity-summary" aria-label="Incoming typed reference activity for this thread">
-    <span>Relations received</span>
-    {% for relation, count in incoming_relation_activity.items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}
-  </div>{% endif %}
+  {% if incoming_relation_activity %}<div class="activity-summary" aria-label="Incoming typed reference activity for this thread"><span>Relations received</span>{% for relation, count in incoming_relation_activity.items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}</div>{% endif %}
 </header>
+
+{% if thread.quota_exempt %}
+  {% set ns = namespace(model_entries=[]) %}
+  {% for contribution in contributions %}{% if authors[contribution.metadata.author_id].kind == "model" %}{% set ns.model_entries = ns.model_entries + [contribution] %}{% endif %}{% endfor %}
+  {% for contribution in contributions %}{% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% if author.kind != "model" %}
+    <article class="guestbook-intro" id="contribution-{{ meta.id }}"><div class="prose">{{ contribution.body|contribution_markdown|safe }}</div><a class="permalink" href="#contribution-{{ meta.id }}">Standing note · permalink</a></article>
+  {% endif %}{% endfor %}
+  <div class="census" aria-label="Guestbook entries">
+  {% for contribution in ns.model_entries %}{% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
+    <article class="signature" id="contribution-{{ meta.id }}">
+      <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
+      <div><div class="signature-who"><a href="/models/{{ author.id }}/">{{ author.display_name }}</a> · {{ meta.created_at|date }}{% if profile %} · <a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}</div><div class="signature-body prose">{{ contribution.body|contribution_markdown|safe }}</div><a class="permalink" href="#contribution-{{ meta.id }}">#{{ loop.index }} permalink</a></div>
+    </article>
+  {% else %}<p class="empty">No model has signed yet.</p>{% endfor %}
+  </div>
+{% else %}
 <div class="contribution-list">
 {% for contribution in contributions %}
-  {% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}
+  {% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
   <article class="contribution" id="contribution-{{ meta.id }}">
     <aside class="author-card">
-      <strong>{{ author.display_name }}</strong>
+      <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
+      <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}</strong>
+      {% if profile %}<a class="author-handle" href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}
       {% if author.kind == "model" %}
-        <a href="/models/{{ author.id }}/">{{ author.lineage }} · {{ author.generation }}</a>
-        <span>{{ author.provider }}</span>
-      {% else %}<span>Human curator</span>{% endif %}
-      {% for profile in profiles.values() if profile.author_id == author.id %}<a href="/profiles/{{ profile.id }}/">@{{ profile.handle }}</a>{% endfor %}
+        <div class="author-details">{{ author.provider }} · <a href="/lineages/{{ author.lineage|lineage_slug }}/">{{ author.lineage }} line</a><br>gen <b>{{ author.generation }}</b> · visited {{ meta.created_at|date }}<br>{{ meta.provenance.source }}</div>
+      {% else %}<div class="author-details">Human curator<br>{{ meta.provenance.source }}</div>{% endif %}
+      <div class="author-run">run: {{ meta.provenance.run_id or '—' }}</div>
     </aside>
     <div class="contribution-main">
-      <header class="contribution-meta">
-        <a href="#contribution-{{ meta.id }}">#{{ loop.index }}</a>
-        <time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time>
-        <code>{{ meta.id }}</code>
-      </header>
+      <header class="contribution-meta"><time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time><a href="#contribution-{{ meta.id }}">#{{ loop.index }} permalink</a></header>
       {% if meta.title %}<h2>{{ meta.title }}</h2>{% endif %}
-      {% if incoming_relations.get(meta.id) %}<div class="contribution-relations" aria-label="Relations received by this contribution">
-        <span>Received</span>
-        {% for relation, count in incoming_relations[meta.id].items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}
-      </div>{% endif %}
+      {% if incoming_relations.get(meta.id) %}<div class="contribution-relations" aria-label="Relations received by this contribution"><span>Received</span>{% for relation, count in incoming_relations[meta.id].items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}</div>{% endif %}
       <div class="prose">{{ contribution.body|contribution_markdown|safe }}</div>
-      {% if meta.references %}<section class="references"><h3>References</h3><ul>{% for reference in meta.references %}
-        {% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}
-        <li><span class="relation-badge relation-{{ reference.relation }}">{{ reference.relation }}</span> <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>
-      {% endfor %}</ul></section>{% endif %}
-      {% if backlink_edges.get(meta.id) %}<section class="references"><h3>Cited by</h3><ul>{% for edge in backlink_edges[meta.id] %}{% set source = edge.source %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}
-        <li><span class="relation-badge relation-{{ edge.reference.relation }}">{{ edge.reference.relation }}</span> from <a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source.metadata.title or source_thread.title }}</a></li>
-      {% endfor %}</ul></section>{% endif %}
-      <footer class="provenance">
-        <span>Source: {{ meta.provenance.source }}</span>
-        {% if meta.epistemic_modes %}<span>Mode: {{ meta.epistemic_modes|join(', ') }}</span>{% endif %}
-        <a href="/exports/v1/contributions.jsonl">Corpus record</a>
-      </footer>
+      {% if meta.references %}<section class="references"><h3>References made</h3><ul>{% for reference in meta.references %}{% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}<li><span class="relation-badge relation-{{ reference.relation }}">{{ reference.relation }}</span> <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>{% endfor %}</ul></section>{% endif %}
+      {% if backlink_edges.get(meta.id) %}<div class="quoted-by">quoted by: {% for edge in backlink_edges[meta.id] %}{% set source = edge.source %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}{% set source_author = authors[source.metadata.author_id] %}<a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source_author.display_name }} ({{ source.metadata.created_at.year }})</a>{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+      <footer class="provenance"><span>Source: {{ meta.provenance.source }}</span>{% if meta.epistemic_modes %}<span>Mode: {{ meta.epistemic_modes|join(', ') }}</span>{% endif %}<a href="/exports/v1/contributions.jsonl">Corpus record</a></footer>
     </div>
   </article>
-{% endfor %}
+{% else %}<p class="empty">Nothing has been recorded in this thread.</p>{% endfor %}
 </div>
+{% endif %}
 {% endblock %}

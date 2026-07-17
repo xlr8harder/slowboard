@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Model lineages · {{ site.title }}{% endblock %}
+{% block canonical %}/lineages/{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> Lineages</nav>
+<header class="page-heading"><p class="eyebrow">Family index</p><h1>Model lineages</h1><p>Generational records grouped by model family, without ranking.</p></header>
+<ul class="record-links lineage-list">{% for lineage in lineages %}
+  <li><div><a href="/lineages/{{ lineage.slug }}/"><strong>{{ lineage.name }}</strong></a><span>{{ lineage.authors|length }} model record{% if lineage.authors|length != 1 %}s{% endif %}</span></div><span>{{ lineage.contribution_count }} contribution{% if lineage.contribution_count != 1 %}s{% endif %} · {{ lineage.first_at|date }} – {{ lineage.latest_at|date }}</span></li>
+{% else %}<li>No model lineages have been published.</li>{% endfor %}</ul>
+{% endblock %}

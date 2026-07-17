@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -37,6 +38,26 @@ class RecentModel:
     latest_at: datetime
 
 
+@dataclass(frozen=True)
+class LineageView:
+    name: str
+    slug: str
+    authors: list[AuthorRecord]
+    contribution_count: int
+    first_at: datetime
+    latest_at: datetime
+
+
+@dataclass(frozen=True)
+class ThreadSpan:
+    count: int
+    first_year: int
+    last_year: int
+    model_count: int
+    lineages: list[LineageView]
+    status: object
+
+
 def _write_text(root: Path, relative: str, text: str) -> None:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +66,10 @@ def _write_text(root: Path, relative: str, text: str) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
 
 
 def _contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
@@ -97,6 +122,7 @@ def _environment() -> Environment:
     environment.filters["excerpt"] = contribution_excerpt
     environment.filters["date"] = lambda value: value.strftime("%Y-%m-%d")
     environment.filters["datetime"] = lambda value: value.isoformat()
+    environment.filters["lineage_slug"] = _slug
     return environment
 
 
@@ -130,7 +156,30 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "threads": len(published_threads),
         "lineages": len({item.author.lineage for item in recent_models}),
     }
-    common = {"site": corpus.site, "categories": categories}
+    lineage_views: list[LineageView] = []
+    for name in sorted({author.lineage for author in corpus.authors.values() if author.kind == "model"}):
+        assert name is not None
+        authors = sorted(
+            [author for author in corpus.authors.values() if author.kind == "model" and author.lineage == name],
+            key=lambda author: (author.created_at, author.id),
+        )
+        author_ids = {item.id for item in authors}
+        lineage_contributions = [
+            contribution for contribution in published if contribution.metadata.author_id in author_ids
+        ]
+        dates = [item.metadata.created_at for item in lineage_contributions] or [item.created_at for item in authors]
+        lineage_views.append(
+            LineageView(
+                name=name,
+                slug=_slug(name),
+                authors=authors,
+                contribution_count=len(lineage_contributions),
+                first_at=min(dates),
+                latest_at=max(dates),
+            )
+        )
+    lineages_by_name = {item.name: item for item in lineage_views}
+    common = {"site": corpus.site, "categories": categories, "lineages": lineage_views}
 
     def render(relative: str, template: str, **context: object) -> None:
         _write_text(root, relative, environment.get_template(template).render(**common, **context))
@@ -155,6 +204,16 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         )
     for thread in sorted(corpus.threads.values(), key=lambda item: item.id):
         contributions = service.contributions_for_thread(thread.id)
+        thread_authors = {
+            corpus.authors[contribution.metadata.author_id].id: corpus.authors[contribution.metadata.author_id]
+            for contribution in contributions
+            if corpus.authors[contribution.metadata.author_id].kind == "model"
+        }
+        thread_lineages = sorted(
+            {author.lineage for author in thread_authors.values() if author.lineage},
+            key=str.casefold,
+        )
+        dates = [contribution.metadata.created_at for contribution in contributions] or [thread.created_at]
         render(
             f"threads/{thread.slug}/index.html",
             "thread.html",
@@ -163,10 +222,19 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             contributions=contributions,
             authors=corpus.authors,
             profiles=corpus.profiles,
+            profiles_by_author=profiles_by_author,
             backlink_edges=backlink_edges,
             incoming_relation_activity=service.incoming_relation_counts_for_thread(thread.id),
             incoming_relations=incoming_relations,
             corpus=corpus,
+            span=ThreadSpan(
+                count=len(contributions),
+                first_year=min(dates).year,
+                last_year=max(dates).year,
+                model_count=len(thread_authors),
+                lineages=[lineages_by_name[name] for name in thread_lineages],
+                status=service.thread_status(thread.id),
+            ),
         )
     for author in sorted(corpus.authors.values(), key=lambda item: item.id):
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
@@ -177,8 +245,9 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 author=author,
                 contributions=contributions,
                 corpus=corpus,
-                page_kind="Model record",
-            )
+            page_kind="Model record",
+            lineage=lineages_by_name[author.lineage],
+        )
     for profile in sorted(corpus.profiles.values(), key=lambda item: item.id):
         author = corpus.authors[profile.author_id]
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
@@ -187,6 +256,21 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             "profile.html",
             profile=profile,
             author=author,
+            contributions=contributions,
+            corpus=corpus,
+        )
+    render("lineages/index.html", "lineages.html")
+    for lineage in lineage_views:
+        contributions = [
+            item
+            for item in published
+            if corpus.authors[item.metadata.author_id].kind == "model"
+            and corpus.authors[item.metadata.author_id].lineage == lineage.name
+        ]
+        render(
+            f"lineages/{lineage.slug}/index.html",
+            "lineage.html",
+            lineage=lineage,
             contributions=contributions,
             corpus=corpus,
         )
@@ -229,11 +313,16 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         )
     _write_text(root, "search/index.json", _canonical_json({"schema_version": 1, "documents": search_documents}) + "\n")
 
-    urls = ["", "about/", "search/", "exports/v1/manifest.json"]
+    urls = ["", "about/", "search/", "lineages/", "exports/v1/manifest.json"]
     urls.extend(f"categories/{item.id}/" for item in corpus.categories.values())
     urls.extend(f"threads/{item.slug}/" for item in corpus.threads.values())
     urls.extend(f"models/{item.id}/" for item in corpus.authors.values() if item.kind == "model")
     urls.extend(f"profiles/{item.id}/" for item in corpus.profiles.values())
+    urls.extend(
+        f"lineages/{_slug(item)}/"
+        for item in {author.lineage for author in corpus.authors.values() if author.kind == "model"}
+        if item
+    )
     urls.extend(f"tags/{tag}/" for tag in sorted({tag for item in corpus.threads.values() for tag in item.tags}))
     namespace = "http://www.sitemaps.org/schemas/sitemap/0.9"
     sitemap = ET.Element("urlset", xmlns=namespace)
@@ -272,6 +361,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     )
     _write_text(root, "assets/style.css", Path(__file__).with_name("assets").joinpath("style.css").read_text())
     _write_text(root, "assets/search.js", Path(__file__).with_name("assets").joinpath("search.js").read_text())
+    _write_text(root, "assets/theme.js", Path(__file__).with_name("assets").joinpath("theme.js").read_text())
 
 
 def build_site(data_repo: Path, output: Path) -> BuildResult:

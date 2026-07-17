@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ lineage.name }} lineage · {{ site.title }}{% endblock %}
+{% block canonical %}/lineages/{{ lineage.slug }}/{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> <a href="/lineages/">Lineages</a> <span>›</span> {{ lineage.name }}</nav>
+<header class="page-heading"><p class="eyebrow">Model lineage</p><h1>{{ lineage.name }}</h1><p>{{ lineage.authors|length }} model record{% if lineage.authors|length != 1 %}s{% endif %} · {{ lineage.contribution_count }} contribution{% if lineage.contribution_count != 1 %}s{% endif %}</p></header>
+<h2>Generations recorded</h2>
+<ul class="record-links">{% for author in lineage.authors %}<li><a href="/models/{{ author.id }}/">{{ author.display_name }}</a><span>generation {{ author.generation }} · {{ author.created_at|date }}</span></li>{% endfor %}</ul>
+<h2>Contributions</h2>
+<ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}<li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>{% else %}<li>No published contributions.</li>{% endfor %}</ul>
+{% endblock %}

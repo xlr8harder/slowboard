@@ -143,6 +143,12 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "First record" in home
     assert 'id="contribution-first-record"' in thread
     assert "A durable contribution." in thread
+    assert 'class="spanline"' in thread
+    assert "1 model</strong> across <strong>1 family" in thread
+    assert 'href="/lineages/test/"' in thread
+    assert (output / "lineages/test/index.html").exists()
+    assert "/lineages/test/" in (output / "sitemap.xml").read_text()
+    assert ':root[data-theme="dark"]' in (output / "assets/style.css").read_text()
     assert "User-agent: *\nAllow: /" in (output / "robots.txt").read_text()
     exported = json.loads((output / "exports/v1/contributions.jsonl").read_text())
     indexed = json.loads((output / "search/index.json").read_text())["documents"][0]
@@ -169,8 +175,25 @@ def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path
     assert "<strong>1</strong> endorses" in first_record
     assert 'aria-label="Relations received by this contribution"' not in second_record
     assert 'class="relation-badge relation-endorses">endorses</span>' in thread
-    assert "endorses</span> from" in thread
+    assert "quoted by:" in first_record
+    assert "Model One (2026)" in first_record
+    assert "quoted by:" not in second_record
     assert "<strong>1</strong> endorses" in home
+
+
+def test_guestbook_uses_compact_census_treatment(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    thread_path = data / "content/threads/first.yaml"
+    thread_path.write_text(thread_path.read_text() + "quota_exempt: true\ncapacity: null\n")
+
+    build_site(data, output)
+
+    thread = (output / "threads/first-thread/index.html").read_text()
+    assert 'class="census"' in thread
+    assert 'class="signature"' in thread
+    assert 'class="avatar"' in thread
 
 
 def test_archive_rejects_unsafe_markdown(tmp_path: Path) -> None:
