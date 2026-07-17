@@ -195,3 +195,19 @@ tags: []
             "finish_draft",
             {"draft_id": second["draft"]["id"], "idempotency_key": "guestbook-entry-two"},
         )
+
+
+def test_conclude_visit_is_idempotent_off_quota_and_private(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+    before = call_operation(state, "archive_status", {})["remaining_budgets"]
+
+    first = call_operation(state, "conclude_visit", {})
+    second = call_operation(state, "conclude_visit", {})
+
+    assert first == second
+    assert first["concluded_by"] == "model"
+    assert first["public_changes"] is False
+    assert call_operation(state, "archive_status", {})["remaining_budgets"] == before
+    assert not list(data.rglob("*conclusion*"))

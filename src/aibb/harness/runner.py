@@ -178,6 +178,18 @@ def _record_agent_event(store: SessionStore, event: Any) -> None:
     store.append("agent_event", payload, "private_provider")
 
 
+def _turn_boundary_outcome(
+    manifest: RunManifest, run_dir: Path, *, once: bool
+) -> Literal["model_completed", "single_turn_suspended", "headless_suspended", "interactive"]:
+    if (run_dir / "mcp/visit-conclusion.json").exists():
+        return "model_completed"
+    if once:
+        return "single_turn_suspended"
+    if manifest.mode == "headless":
+        return "headless_suspended"
+    return "interactive"
+
+
 async def _terminal_readline(prompt: str) -> str:
     """Read cancellably from a POSIX terminal without leaving a blocked worker thread."""
 
@@ -295,6 +307,11 @@ async def run_openrouter_visit(
         console.print(f"Context: {context_digest}")
         console.print(f"Remaining: {ledger.remaining()}")
 
+        if _turn_boundary_outcome(manifest, run_dir, once=False) == "model_completed":
+            store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
+            store.write_checkpoint(engine.snapshot())
+            return manifest.run_id
+
         async def send(text: str | None, *, allow_queued_input: bool = False) -> None:
             if text is None:
                 store.append("context_only_begin", {}, "operator")
@@ -335,8 +352,18 @@ async def run_openrouter_visit(
 
         if opening is not None or manifest.mode == "headless":
             await send(opening, allow_queued_input=False)
-            if once or manifest.mode == "headless":
-                store.append("run_suspended", {"reason": "single-turn boundary"}, "operator")
+            outcome = _turn_boundary_outcome(manifest, run_dir, once=once)
+            if outcome == "model_completed":
+                store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
+                store.write_checkpoint(engine.snapshot())
+                return manifest.run_id
+            if outcome in {"single_turn_suspended", "headless_suspended"}:
+                reason = (
+                    "single-turn boundary"
+                    if outcome == "single_turn_suspended"
+                    else "headless model turn ended without conclude_visit"
+                )
+                store.append("run_suspended", {"reason": reason}, "operator")
                 store.write_checkpoint(engine.snapshot())
                 return manifest.run_id
 
@@ -345,6 +372,10 @@ async def run_openrouter_visit(
             line = await _terminal_readline("curator> ")
             if line == ":begin":
                 await send(None, allow_queued_input=True)
+                if _turn_boundary_outcome(manifest, run_dir, once=False) == "model_completed":
+                    store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
             elif line == ":status":
                 console.print(ledger.remaining())
             elif line == ":suspend":
@@ -359,3 +390,7 @@ async def run_openrouter_visit(
                 console.print("Unknown local command")
             elif line.strip():
                 await send(line, allow_queued_input=True)
+                if _turn_boundary_outcome(manifest, run_dir, once=False) == "model_completed":
+                    store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id

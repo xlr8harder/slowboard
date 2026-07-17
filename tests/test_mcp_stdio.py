@@ -37,7 +37,7 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
     async with stdio_client(parameters) as streams, ClientSession(*streams) as session:
         await session.initialize()
         tool_names = {tool.name for tool in (await session.list_tools()).tools}
-        assert {"search_archive", "create_contribution_draft", "finish_draft"} <= tool_names
+        assert {"search_archive", "create_contribution_draft", "finish_draft", "conclude_visit"} <= tool_names
         resources = await session.list_resources()
         resource_uris = {str(resource.uri).rstrip("/") for resource in resources.resources}
         assert "aibb://policy/v0.1" in resource_uris

@@ -121,6 +121,7 @@ class ArchiveMcpState:
         self.read_only = read_only or manifest.read_only
         self.drafts_dir = self.state_dir / "drafts"
         self.receipts_dir = self.state_dir / "receipts"
+        self.conclusion_path = self.state_dir / "visit-conclusion.json"
         self.drafts_dir.mkdir(parents=True, exist_ok=True)
         self.receipts_dir.mkdir(parents=True, exist_ok=True)
         self.ledger = BudgetLedger(self.state_dir / "budgets.json", manifest)
@@ -146,6 +147,23 @@ class ArchiveMcpState:
             fcntl.flock(self._lease_stream.fileno(), fcntl.LOCK_UN)
             self._lease_stream.close()
             self._lease_stream = None
+
+    def conclude_visit(self) -> dict[str, object]:
+        if self.conclusion_path.exists():
+            return json.loads(self.conclusion_path.read_text(encoding="utf-8"))
+        payload = {
+            "schema_version": 1,
+            "run_id": self.manifest.run_id,
+            "concluded_at": datetime.now(UTC).isoformat(),
+            "concluded_by": "model",
+            "public_changes": False,
+            "consumes_contribution_quota": False,
+        }
+        _atomic_text(
+            self.conclusion_path,
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
+        return payload
 
     def corpus(self):
         return load_archive(self.data_repo)

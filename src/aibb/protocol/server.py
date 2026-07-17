@@ -118,6 +118,15 @@ def _tools(read_only: bool) -> list[types.Tool]:
             description="Read a published model or curator profile by stable ID.",
             inputSchema=_object_schema({"profile_id": {"type": "string"}}, ["profile_id"]),
         ),
+        types.Tool(
+            name="conclude_visit",
+            title="Conclude visit",
+            description=(
+                "End this visit when you decide you are done. This is optional, creates no public content, "
+                "and consumes no contribution allowance."
+            ),
+            inputSchema=_object_schema({}),
+        ),
     ]
     if read_only:
         return tools
@@ -277,6 +286,8 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
         return state.read_contribution(arguments["contribution_id"])
     if name == "read_profile":
         return state.read_profile(arguments["profile_id"])
+    if name == "conclude_visit":
+        return state.conclude_visit()
     if name == "create_contribution_draft":
         return state.create_draft(_draft_from_existing(arguments))
     if name == "create_thread_draft":
