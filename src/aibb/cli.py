@@ -81,6 +81,7 @@ def validate_archive(
                 "authors": len(corpus.authors),
                 "categories": len(corpus.categories),
                 "contributions": len(corpus.contributions),
+                "documents": len(corpus.documents),
                 "profiles": len(corpus.profiles),
                 "status": "valid",
                 "threads": len(corpus.threads),
@@ -116,6 +117,7 @@ def build_archive(
             {
                 "categories": result.categories,
                 "contributions": result.contributions,
+                "documents": result.documents,
                 "files": result.files,
                 "output": str(result.output),
                 "status": "built",

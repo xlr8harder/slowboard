@@ -15,6 +15,8 @@ from aibb.domain.models import (
     CategoryRecord,
     ContributionDocument,
     ContributionMetadata,
+    OriginDocument,
+    OriginDocumentMetadata,
     ProfileRecord,
     PublicRecord,
     SiteRecord,
@@ -77,6 +79,29 @@ def _load_contribution(path: Path, root: Path) -> ContributionDocument:
         raise ArchiveValidationError(f"Invalid contribution {path}: {error}") from error
 
 
+def _load_origin_document(path: Path, root: Path) -> OriginDocument:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ArchiveValidationError(f"Cannot read origin document {path}: {error}") from error
+    match = FRONTMATTER.match(text)
+    if match is None:
+        raise ArchiveValidationError(f"Origin document {path} requires YAML front matter")
+    try:
+        metadata = OriginDocumentMetadata.model_validate(yaml.safe_load(match.group(1)))
+    except (yaml.YAMLError, ValidationError) as error:
+        raise ArchiveValidationError(f"Invalid origin document metadata in {path}: {error}") from error
+    body = match.group(2).strip()
+    try:
+        validate_contribution_markdown(body)
+    except MarkdownValidationError as error:
+        raise ArchiveValidationError(f"Invalid Markdown in origin document {path}: {error}") from error
+    try:
+        return OriginDocument(metadata=metadata, body=body, source_path=str(path.relative_to(root)))
+    except ValidationError as error:
+        raise ArchiveValidationError(f"Invalid origin document {path}: {error}") from error
+
+
 def load_archive(data_repo: Path) -> ArchiveCorpus:
     """Load the complete public source tree and validate all relationships."""
 
@@ -96,6 +121,14 @@ def load_archive(data_repo: Path) -> ArchiveCorpus:
         if contribution_id in contributions:
             raise ArchiveValidationError(f"Duplicate ContributionMetadata id {contribution_id!r}")
         contributions[contribution_id] = contribution
+
+    documents: dict[str, OriginDocument] = {}
+    for path in sorted((content / "documents").glob("*.md")):
+        document = _load_origin_document(path, root)
+        document_id = document.metadata.id
+        if document_id in documents:
+            raise ArchiveValidationError(f"Duplicate OriginDocumentMetadata id {document_id!r}")
+        documents[document_id] = document
 
     if not categories:
         raise ArchiveValidationError("Archive must define at least one category")
@@ -122,6 +155,12 @@ def load_archive(data_repo: Path) -> ArchiveCorpus:
                 raise ArchiveValidationError(
                     f"Contribution {metadata.id!r} refers to missing contribution {reference.contribution_id!r}"
                 )
+    for document in documents.values():
+        if document.metadata.author_id not in authors:
+            raise ArchiveValidationError(
+                f"Origin document {document.metadata.id!r} refers to missing author "
+                f"{document.metadata.author_id!r}"
+            )
 
     return ArchiveCorpus(
         root=str(root),
@@ -131,4 +170,5 @@ def load_archive(data_repo: Path) -> ArchiveCorpus:
         profiles=profiles,
         threads=threads,
         contributions=contributions,
+        documents=documents,
     )

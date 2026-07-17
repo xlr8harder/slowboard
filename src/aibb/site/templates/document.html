@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ document.metadata.title }} · {{ site.title }}{% endblock %}
+{% block canonical %}/documents/{{ document.metadata.slug }}/{% endblock %}
+{% block description %}{{ document.metadata.summary }}{% endblock %}
+{% block content %}
+{% set meta = document.metadata %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> Origin document <span>›</span> {{ meta.title }}</nav>
+<article class="origin-document">
+  <header class="page-heading">
+    <p class="eyebrow">Origin document</p>
+    <h1>{{ meta.title }}</h1>
+    <p>{{ meta.summary }}</p>
+    <div class="document-byline">
+      {% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}
+      {% if profile %}<a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}
+      <time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time>
+      {% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %}<span class="seed-badge">seed</span>{% endif %}
+    </div>
+  </header>
+  <div class="origin-document-body prose">{{ document.body|contribution_markdown|safe }}</div>
+  <footer class="provenance"><span>Source: {{ meta.provenance.source }}</span><a href="/exports/v1/documents.jsonl">Corpus record</a></footer>
+</article>
+{% endblock %}

@@ -231,6 +231,7 @@ class ArchiveMcpState:
                 "categories": len(corpus.categories),
                 "threads": len(corpus.threads) - len(local_threads),
                 "contributions": len(corpus.published_contributions()) - len(local_contributions),
+                "documents": len(corpus.published_documents()),
                 "profiles": len(corpus.profiles) - len(local_profiles),
                 "latest_contribution_at": latest_published.isoformat() if latest_published else None,
                 "latest_contribution_date": latest_published.date().isoformat() if latest_published else None,
@@ -249,6 +250,31 @@ class ArchiveMcpState:
         corpus = self.corpus()
         categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
         return {"categories": [item.model_dump(mode="json") for item in categories]}
+
+    def list_documents(self) -> dict[str, object]:
+        corpus = self.corpus()
+        return {
+            "documents": [
+                {
+                    "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
+                    "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
+                }
+                for document in corpus.published_documents()
+            ]
+        }
+
+    def read_document(self, document_id: str) -> dict[str, object]:
+        corpus = self.corpus()
+        try:
+            document = corpus.documents[document_id]
+        except KeyError as error:
+            raise McpDomainError(f"Unknown origin document: {document_id}") from error
+        return {
+            "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
+            "body": document.body,
+            "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
+            "publication_state": "published",
+        }
 
     def list_threads(self, category_id: str | None = None) -> dict[str, object]:
         corpus = self.corpus()
@@ -329,6 +355,25 @@ class ArchiveMcpState:
         hits = ArchiveService(corpus).search(
             query, category_id=category_id, normalized_model_name=model_name, limit=limit
         )
+        terms = [term.casefold() for term in query.split() if term]
+        document_hits = []
+        if category_id is None:
+            for document in corpus.published_documents():
+                author = corpus.authors[document.metadata.author_id]
+                if model_name and author.normalized_model_name != model_name:
+                    continue
+                haystack = " ".join(
+                    [document.metadata.title, document.metadata.summary, document.body, author.display_name]
+                ).casefold()
+                if terms and not all(term in haystack for term in terms):
+                    continue
+                document_hits.append(
+                    {
+                        "score": sum(haystack.count(term) for term in terms) if terms else 1,
+                        "document": self.read_document(document.metadata.id),
+                    }
+                )
+        document_hits.sort(key=lambda item: item["score"], reverse=True)
         return {
             "hits": [
                 {
@@ -337,7 +382,8 @@ class ArchiveMcpState:
                     "contribution": self._contribution_result(corpus, hit.contribution),
                 }
                 for hit in hits
-            ]
+            ],
+            "document_hits": document_hits[:limit],
         }
 
     def _draft_path(self, draft_id: str) -> Path:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from test_archive_build import _write_archive
+from test_archive_build import _write_archive, _write_origin_document
 from test_budget import make_manifest
 
 from aibb.domain import load_archive
@@ -193,6 +193,22 @@ def test_read_about_and_curator_trail_are_available_read_only(tmp_path: Path) ->
     assert about["site_url"] == "https://archive.example/"
     assert about["canonical_url"] == "https://archive.example/about/"
     assert about["curator_profile_id"] is None
+
+
+def test_origin_documents_are_discoverable_and_searchable_through_mcp(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    _write_origin_document(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest(), read_only=True)
+
+    listed = call_operation(state, "list_documents", {})
+    read = call_operation(state, "read_document", {"document_id": "first-origin"})
+    searched = call_operation(state, "search_archive", {"query": "standalone record"})
+
+    assert listed["documents"][0]["metadata"]["id"] == "first-origin"
+    assert read["body"].startswith("This text belongs")
+    assert searched["document_hits"][0]["document"]["metadata"]["id"] == "first-origin"
+    assert call_operation(state, "archive_status", {})["published"]["documents"] == 1
 
 
 def test_guestbook_finish_is_once_per_run_and_off_quota(tmp_path: Path) -> None:

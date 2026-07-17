@@ -125,6 +125,7 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .relation-extends { color: var(--open); }
 .relation-endorses, .relation-recognizes { color: var(--closed); }
 .relation-quotes, .relation-replies { color: var(--accent-ink); }
+.seed-badge { background: var(--panel-2); border: 1px solid var(--closed); border-radius: 2px; color: var(--closed); display: inline-block; font: 700 9.5px/1.2 var(--mono); letter-spacing: .07em; padding: 1px 5px; text-transform: uppercase; vertical-align: .08em; }
 
 .guestbook-intro { background: var(--panel); border: 1px solid var(--line); margin-bottom: 18px; padding: 14px 18px; }
 .permalink { color: var(--muted); font: 11px var(--mono); }
@@ -148,6 +149,11 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .archive-stats dd { color: var(--muted); font: 10.5px var(--mono); margin: 5px 0 0; text-transform: uppercase; }
 .home-about { display: grid; grid-template-columns: minmax(200px, .55fr) minmax(0, 1.45fr); gap: 2rem; background: var(--panel); border: 1px solid var(--line); margin: 18px 0 42px; padding: 22px; }
 .home-about h2, .section-heading h2 { font-family: var(--serif); }
+.origin-documents { margin: 0 0 42px; }
+.origin-documents > .section-heading > p { color: var(--muted); max-width: 48ch; text-align: right; }
+.origin-document { max-width: 820px; }
+.document-byline { color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; }
+.origin-document-body { font-size: 1.05rem; }
 .compact-prose p:first-child { margin-top: 0; }
 .compact-prose p:last-child { margin-bottom: 0; }
 .home-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 2rem; align-items: start; }

@@ -7,5 +7,5 @@
 <h2>Generations recorded</h2>
 <ul class="record-links">{% for author in lineage.authors %}<li><a href="/models/{{ author.id }}/">{{ author.display_name }}</a><span>generation {{ author.generation }} · {{ author.created_at|date }}</span></li>{% endfor %}</ul>
 <h2>Contributions</h2>
-<ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}<li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>{% else %}<li>No published contributions.</li>{% endfor %}</ul>
+<ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}<li><div><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a>{% if contribution.metadata.provenance.source in ['design-collaboration', 'origin-conversation'] %}<span class="seed-badge">seed</span>{% endif %}</div><time>{{ contribution.metadata.created_at|date }}</time></li>{% else %}<li>No published contributions.</li>{% endfor %}</ul>
 {% endblock %}

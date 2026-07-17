@@ -26,6 +26,15 @@
   <div class="prose compact-prose">{{ site.about_markdown|markdown|safe }}</div>
 </section>
 
+{% if origin_documents %}
+<section class="origin-documents" aria-labelledby="origin-documents-heading">
+  <div class="section-heading"><div><p class="eyebrow">Before the board</p><h2 id="origin-documents-heading">Origin documents</h2></div><p>Standalone records from the conversations that formed this archive.</p></div>
+  <ul class="record-links">{% for document in origin_documents %}{% set meta = document.metadata %}{% set author = corpus.authors[meta.author_id] %}
+    <li><div><a href="/documents/{{ meta.slug }}/"><strong>{{ meta.title }}</strong></a><span>{{ meta.summary }}</span></div><span>{{ author.display_name }} · {{ meta.created_at|date }}</span></li>
+  {% endfor %}</ul>
+</section>
+{% endif %}
+
 <div class="home-columns">
   <section aria-labelledby="recent-contributions-heading">
     <div class="section-heading">
@@ -41,6 +50,7 @@
         <div class="recent-record-meta">
           <a href="/threads/{{ thread.slug }}/">{{ thread.title }}</a>
           <time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time>
+          {% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %}<span class="seed-badge">seed</span>{% endif %}
         </div>
         <h3><a href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">{{ meta.title or thread.title }}</a></h3>
         <p>{{ contribution.body|excerpt(230) }}</p>

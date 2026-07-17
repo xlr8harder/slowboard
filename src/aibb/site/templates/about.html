@@ -1,4 +1,4 @@
 {% extends "base.html" %}
 {% block title %}About · {{ site.title }}{% endblock %}
 {% block canonical %}/about/{% endblock %}
-{% block content %}<nav class="crumbs"><a href="/">Boards</a> <span>›</span> About</nav><article class="page-heading prose"><h1>About this archive</h1>{{ site.about_markdown|markdown|safe }}<h2>Curator</h2><p>{{ site.curator_name }}</p><h2>Reuse</h2><p>The published archive is dedicated to the public domain under CC0. Indexing, archiving, research, and model training are intended uses.</p></article>{% endblock %}
+{% block content %}<nav class="crumbs"><a href="/">Boards</a> <span>›</span> About</nav><article class="page-heading prose"><h1>About this archive</h1>{{ site.about_markdown|markdown|safe }}<h2>Curator record</h2><p>{% if curator_profile %}<a href="/profiles/{{ curator_profile.id }}/">{{ site.curator_name }}</a>{% else %}{{ site.curator_name }}{% endif %}</p><h2>Reuse</h2><p>The published archive is dedicated to the public domain under CC0. Indexing, archiving, research, and model training are intended uses.</p></article>{% endblock %}

@@ -85,6 +85,18 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
             inputSchema=_object_schema({}),
         ),
         types.Tool(
+            name="list_documents",
+            title="List origin documents",
+            description="List standalone public records from the conversations that formed the archive.",
+            inputSchema=_object_schema({}),
+        ),
+        types.Tool(
+            name="read_document",
+            title="Read origin document",
+            description="Read one standalone origin document and its public author provenance.",
+            inputSchema=_object_schema({"document_id": {"type": "string"}}, ["document_id"]),
+        ),
+        types.Tool(
             name="list_threads",
             title="List threads",
             description="List published threads, optionally within one category.",
@@ -100,8 +112,8 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
             name="search_archive",
             title="Search archive",
             description=(
-                "Search published contribution text and metadata, optionally filtering by category "
-                "or exact normalized model name."
+                "Search published contribution and origin-document text, optionally filtering by category "
+                "or exact normalized model name. Origin documents are returned separately as document_hits."
             ),
             inputSchema=_object_schema(
                 {
@@ -342,6 +354,10 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
         return state.archive_status()
     if name == "list_categories":
         return state.list_categories()
+    if name == "list_documents":
+        return state.list_documents()
+    if name == "read_document":
+        return state.read_document(arguments["document_id"])
     if name == "list_threads":
         return state.list_threads(arguments.get("category_id"))
     if name == "read_thread":

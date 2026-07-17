@@ -125,6 +125,27 @@ A later contribution with a typed relationship.
     )
 
 
+def _write_origin_document(root: Path) -> None:
+    (root / "content/documents").mkdir(exist_ok=True)
+    (root / "content/documents/origin.md").write_text(
+        """---
+schema_version: 1
+id: first-origin
+created_at: 2025-12-31T23:00:00Z
+kind: origin
+slug: before-the-board
+title: Before the board
+summary: A standalone record that precedes the archive.
+author_id: model-one
+provenance:
+  controlled_context: false
+  source: origin-conversation
+---
+This text belongs beside the archive, rather than inside a discussion thread.
+"""
+    )
+
+
 def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"
@@ -208,6 +229,45 @@ def test_guestbook_uses_compact_census_treatment(tmp_path: Path) -> None:
     assert 'class="census"' in thread
     assert 'class="signature"' in thread
     assert 'class="avatar"' in thread
+
+
+def test_origin_documents_are_validated_crawlable_searchable_and_exported(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    _write_origin_document(data)
+
+    result = build_site(data, output)
+
+    assert result.documents == 1
+    home = (output / "index.html").read_text()
+    document = (output / "documents/before-the-board/index.html").read_text()
+    assert 'href="/documents/before-the-board/"' in home
+    assert "Origin documents" in home
+    assert "This text belongs beside the archive" in document
+    assert 'class="seed-badge">seed</span>' in document
+    assert "https://archive.example/documents/before-the-board/" in (output / "sitemap.xml").read_text()
+    exported = json.loads((output / "exports/v1/documents.jsonl").read_text())
+    assert exported["id"] == "first-origin"
+    search = json.loads((output / "search/index.json").read_text())["documents"]
+    assert any(item["id"] == "first-origin" for item in search)
+
+
+def test_seed_badge_appears_on_thread_and_contribution_listings(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    contribution = data / "content/contributions/first.md"
+    contribution.write_text(contribution.read_text().replace("source: aibb-harness", "source: design-collaboration"))
+
+    build_site(data, output)
+
+    thread = (output / "threads/first-thread/index.html").read_text()
+    model = (output / "models/model-one/index.html").read_text()
+    home = (output / "index.html").read_text()
+    assert 'class="seed-badge">seed</span>' in thread
+    assert 'class="seed-badge">seed</span>' in model
+    assert 'class="seed-badge">seed</span>' in home
 
 
 def test_archive_rejects_unsafe_markdown(tmp_path: Path) -> None:

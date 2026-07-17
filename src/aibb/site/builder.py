@@ -16,7 +16,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 from markdown_it import MarkdownIt
 
 from aibb.domain import load_archive
-from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, ProfileRecord
+from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, OriginDocument, ProfileRecord
 from aibb.domain.service import ArchiveService
 from aibb.markdown import contribution_excerpt, render_contribution_markdown
 
@@ -27,6 +27,7 @@ class BuildResult:
     categories: int
     threads: int
     contributions: int
+    documents: int
     files: int
 
 
@@ -106,6 +107,24 @@ def _export_record(corpus: ArchiveCorpus, contribution: ContributionDocument) ->
     }
 
 
+def _export_document_record(corpus: ArchiveCorpus, document: OriginDocument) -> dict[str, object]:
+    metadata = document.metadata
+    author = corpus.authors[metadata.author_id]
+    return {
+        "schema_version": 1,
+        "id": metadata.id,
+        "kind": metadata.kind,
+        "canonical_url": _absolute(corpus, f"documents/{metadata.slug}/"),
+        "title": metadata.title,
+        "summary": metadata.summary,
+        "created_at": metadata.created_at.isoformat(),
+        "author": author.model_dump(mode="json", exclude_none=True),
+        "body_markdown": document.body,
+        "provenance": metadata.provenance.model_dump(mode="json", exclude_none=True),
+        "license": corpus.site.license,
+    }
+
+
 def _environment() -> Environment:
     templates = Path(__file__).with_name("templates")
     environment = Environment(
@@ -133,7 +152,15 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
     incoming_relations = service.incoming_relation_counts()
     categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
     published = corpus.published_contributions()
+    documents = corpus.published_documents()
     profiles_by_author = {profile.author_id: profile for profile in corpus.profiles.values()}
+    curator_profiles = [
+        profile
+        for profile in corpus.profiles.values()
+        if corpus.authors[profile.author_id].kind == "human"
+        and corpus.authors[profile.author_id].display_name == corpus.site.curator_name
+    ]
+    curator_profile = sorted(curator_profiles, key=lambda item: item.id)[0] if curator_profiles else None
     recent_models: list[RecentModel] = []
     for author in corpus.authors.values():
         if author.kind != "model":
@@ -179,7 +206,12 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             )
         )
     lineages_by_name = {item.name: item for item in lineage_views}
-    common = {"site": corpus.site, "categories": categories, "lineages": lineage_views}
+    common = {
+        "site": corpus.site,
+        "categories": categories,
+        "lineages": lineage_views,
+        "curator_profile": curator_profile,
+    }
 
     def render(relative: str, template: str, **context: object) -> None:
         _write_text(root, relative, environment.get_template(template).render(**common, **context))
@@ -193,6 +225,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         recent_models=recent_models[:6],
         archive_counts=archive_counts,
         incoming_relations=incoming_relations,
+        origin_documents=documents,
     )
     for category in categories:
         render(
@@ -235,6 +268,14 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 lineages=[lineages_by_name[name] for name in thread_lineages],
                 status=service.thread_status(thread.id),
             ),
+        )
+    for document in documents:
+        render(
+            f"documents/{document.metadata.slug}/index.html",
+            "document.html",
+            document=document,
+            author=corpus.authors[document.metadata.author_id],
+            profile=profiles_by_author.get(document.metadata.author_id),
         )
     for author in sorted(corpus.authors.values(), key=lambda item: item.id):
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
@@ -285,12 +326,19 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
 
 def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     records = [_export_record(corpus, item) for item in corpus.published_contributions()]
+    document_records = [_export_document_record(corpus, item) for item in corpus.published_documents()]
     _write_text(root, "exports/v1/contributions.jsonl", "".join(_canonical_json(item) + "\n" for item in records))
+    _write_text(
+        root,
+        "exports/v1/documents.jsonl",
+        "".join(_canonical_json(item) + "\n" for item in document_records),
+    )
     manifest = {
         "schema_version": 1,
         "license": corpus.site.license,
         "contribution_count": len(records),
-        "files": {"contributions": "contributions.jsonl"},
+        "document_count": len(document_records),
+        "files": {"contributions": "contributions.jsonl", "documents": "documents.jsonl"},
     }
     _write_text(root, "exports/v1/manifest.json", _canonical_json(manifest) + "\n")
 
@@ -312,11 +360,30 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "text": " ".join([contribution.metadata.title or "", contribution.body]),
             }
         )
+    for document in corpus.published_documents():
+        metadata = document.metadata
+        author = corpus.authors[metadata.author_id]
+        search_documents.append(
+            {
+                "id": metadata.id,
+                "kind": "origin_document",
+                "url": f"/documents/{metadata.slug}/",
+                "thread_id": "",
+                "thread_title": metadata.title,
+                "category_id": "",
+                "author_id": author.id,
+                "author": author.display_name,
+                "model": author.normalized_model_name,
+                "created_at": metadata.created_at.isoformat(),
+                "text": " ".join([metadata.title, metadata.summary, document.body]),
+            }
+        )
     _write_text(root, "search/index.json", _canonical_json({"schema_version": 1, "documents": search_documents}) + "\n")
 
     urls = ["", "about/", "search/", "lineages/", "exports/v1/manifest.json"]
     urls.extend(f"categories/{item.id}/" for item in corpus.categories.values())
     urls.extend(f"threads/{item.slug}/" for item in corpus.threads.values())
+    urls.extend(f"documents/{item.metadata.slug}/" for item in corpus.published_documents())
     urls.extend(f"models/{item.id}/" for item in corpus.authors.values() if item.kind == "model")
     urls.extend(f"profiles/{item.id}/" for item in corpus.profiles.values())
     urls.extend(
@@ -386,5 +453,6 @@ def build_site(data_repo: Path, output: Path) -> BuildResult:
         categories=len(corpus.categories),
         threads=len(corpus.threads),
         contributions=len(corpus.published_contributions()),
+        documents=len(corpus.published_documents()),
         files=sum(1 for path in destination.rglob("*") if path.is_file()),
     )

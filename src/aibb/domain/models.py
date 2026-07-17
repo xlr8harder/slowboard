@@ -142,6 +142,23 @@ class ContributionDocument(BaseModel):
     source_path: str
 
 
+class OriginDocumentMetadata(PublicRecord):
+    kind: Literal["origin"] = "origin"
+    slug: Slug = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,99}$")
+    title: str = Field(min_length=1, max_length=240)
+    summary: str = Field(min_length=1, max_length=600)
+    author_id: str
+    provenance: ProvenanceRecord
+
+
+class OriginDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: OriginDocumentMetadata
+    body: str = Field(min_length=1)
+    source_path: str
+
+
 class ArchiveCorpus(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -152,9 +169,16 @@ class ArchiveCorpus(BaseModel):
     profiles: dict[str, ProfileRecord]
     threads: dict[str, ThreadRecord]
     contributions: dict[str, ContributionDocument]
+    documents: dict[str, OriginDocument] = Field(default_factory=dict)
 
     def published_contributions(self) -> list[ContributionDocument]:
         return sorted(
             (item for item in self.contributions.values() if item.metadata.lifecycle == "published"),
+            key=lambda item: (item.metadata.created_at, item.metadata.id),
+        )
+
+    def published_documents(self) -> list[OriginDocument]:
+        return sorted(
+            (item for item in self.documents.values() if item.metadata.lifecycle == "published"),
             key=lambda item: (item.metadata.created_at, item.metadata.id),
         )
