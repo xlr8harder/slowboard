@@ -429,7 +429,9 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 name="revise_draft",
                 title="Revise draft",
                 description=(
-                    "Replace a private draft while retaining its stable draft ID and revision history boundary."
+                    "Patch a private draft while retaining its stable draft ID and revision history boundary. "
+                    "Only supplied fields change; omitted title, target, modes, references, attachments, and body "
+                    "remain exactly as they were."
                 ),
                 inputSchema=_object_schema(
                     {
@@ -448,7 +450,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         },
                         **CONTRIBUTION_FIELDS,
                     },
-                    ["draft_id", "body"],
+                    ["draft_id"],
                 ),
             ),
             types.Tool(
@@ -575,8 +577,8 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
     if name == "start_new_thread_draft":
         return state.create_draft(_draft_from_new_thread(arguments))
     if name == "revise_draft":
-        value = DraftInput.model_validate({key: value for key, value in arguments.items() if key != "draft_id"})
-        return state.revise_draft(arguments["draft_id"], value)
+        updates = {key: value for key, value in arguments.items() if key != "draft_id"}
+        return state.revise_draft(arguments["draft_id"], updates)
     if name == "preview_draft":
         return state.preview_draft(arguments["draft_id"])
     if name == "finish_draft_for_review":

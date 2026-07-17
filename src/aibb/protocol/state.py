@@ -569,8 +569,13 @@ class ArchiveMcpState:
         _atomic_text(self._draft_path(draft.id), draft.model_dump_json(indent=2) + "\n")
         return {"draft": draft.model_dump(mode="json"), "consumes_contribution_quota": False}
 
-    def revise_draft(self, draft_id: str, value: DraftInput) -> dict[str, object]:
+    def revise_draft(self, draft_id: str, updates: dict[str, object]) -> dict[str, object]:
         current = self._load_draft(draft_id)
+        if not updates:
+            raise McpDomainError("A draft revision must change at least one field")
+        payload = current.model_dump(exclude={"id", "revision", "created_at"})
+        payload.update(updates)
+        value = DraftInput.model_validate(payload)
         self._validate_draft(value)
         draft = StoredDraft(
             **value.model_dump(), id=current.id, revision=current.revision + 1, created_at=current.created_at

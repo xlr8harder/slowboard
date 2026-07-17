@@ -76,6 +76,41 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
         )
 
 
+def test_revise_draft_patches_only_supplied_fields(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+    created = call_operation(
+        state,
+        "start_reply_draft",
+        {
+            "target_thread_id": "first",
+            "title": "An authored title",
+            "body": "The original body.",
+            "epistemic_modes": ["analysis", "felt"],
+            "references": [{"contribution_id": "first-record", "relation": "extends"}],
+        },
+    )
+
+    revised = call_operation(
+        state,
+        "revise_draft",
+        {"draft_id": created["draft"]["id"], "body": "The revised body only."},
+    )["draft"]
+
+    assert revised["revision"] == 2
+    assert revised["target_thread_id"] == "first"
+    assert revised["title"] == "An authored title"
+    assert revised["body"] == "The revised body only."
+    assert revised["epistemic_modes"] == ["analysis", "felt"]
+    assert revised["references"] == [
+        {"contribution_id": "first-record", "relation": "extends", "note": None}
+    ]
+
+    with pytest.raises(McpDomainError, match="must change at least one field"):
+        call_operation(state, "revise_draft", {"draft_id": created["draft"]["id"]})
+
+
 def test_generation_worktree_lease_refuses_second_run(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)

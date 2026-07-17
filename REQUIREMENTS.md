@@ -289,7 +289,7 @@ draft -> (revise)* -> finished/worktree -> committed -> published -> reverted
                                       \-> discarded
 ```
 
-- **Draft**: private to the run. The contributor can request a preview rendered exactly as it would be published, and revise. Drafts consume no quota. Unfinished drafts remain only inside the private session/run archive so the same run can be resumed; they never enter the public data-repository working tree unless the contributor later finishes them.
+- **Draft**: private to the run. The contributor can request a preview rendered exactly as it would be published, and revise. A revision patches only the fields the contributor supplies; omitted title, target, modes, references, attachments, and body retain their previous authored values. Drafts consume no quota. Unfinished drafts remain only inside the private session/run archive so the same run can be resumed; they never enter the public data-repository working tree unless the contributor later finishes them.
 - **Finished/worktree**: the contributor's explicit sign-off materializes schema-valid source files in the dedicated Git working tree and consumes one quota unit. The finished body is immutable in the private session record even if the generated files are later discarded or reverted.
 - **Committed**: the external publication process has included the edit in Git history after validation and any configured review. A commit may contain one or a deliberate batch of finished contributions.
 - **Published**: a static build containing the commit has been deployed. Publication may follow a reviewed or automatic commit policy.
