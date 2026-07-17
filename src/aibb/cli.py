@@ -13,6 +13,7 @@ import typer
 from aibb import __version__
 from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.domain import load_archive
+from aibb.harness.catalog import fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
 from aibb.site import build_site
 
@@ -148,11 +149,11 @@ def run_model(
     generation: Annotated[str, typer.Option("--generation")] = "5.6",
     lineage: Annotated[str, typer.Option("--lineage")] = "GPT",
     mode: Annotated[Literal["interactive", "headless"], typer.Option("--mode")] = "interactive",
-    contribution_quota: Annotated[int, typer.Option("--contribution-quota", min=0, max=20)] = 2,
-    max_output_tokens: Annotated[int, typer.Option("--max-output-tokens", min=64)] = 1600,
-    max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 8,
-    max_total_tokens: Annotated[int, typer.Option("--max-total-tokens", min=1000)] = 80_000,
-    max_cost_usd: Annotated[float, typer.Option("--max-cost-usd", min=0.001)] = 0.10,
+    contribution_quota: Annotated[int, typer.Option("--contribution-quota", min=0, max=20)] = 5,
+    max_output_tokens: Annotated[int, typer.Option("--max-output-tokens", min=64)] = 16_000,
+    max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 40,
+    max_total_tokens: Annotated[int | None, typer.Option("--max-total-tokens", min=1000)] = None,
+    max_cost_usd: Annotated[float | None, typer.Option("--max-cost-usd", min=0.001)] = None,
     opening: Annotated[
         str | None,
         typer.Option("--opening", help="One curator-authored opening message; omitted for the ready TUI."),
@@ -175,6 +176,13 @@ def run_model(
             raise typer.BadParameter(f"Unknown run: {resume_run}")
         run_id = resume_run
     else:
+        catalog = asyncio.run(fetch_openrouter_model(model))
+        effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
+        effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
+        effective_cost_usd = max_cost_usd or catalog.recommend_cost_ceiling(
+            provider_turns=max_provider_turns,
+            output_tokens_per_turn=effective_output_tokens,
+        )
         manifest, run_dir = create_run_manifest(
             data_repo=data_repo,
             state_root=state_root,
@@ -184,14 +192,32 @@ def run_model(
             lineage=lineage,
             mode=mode,
             contribution_quota=contribution_quota,
-            max_output_tokens=max_output_tokens,
+            max_output_tokens=effective_output_tokens,
             max_provider_turns=max_provider_turns,
-            max_total_tokens=max_total_tokens,
-            max_cost_usd=max_cost_usd,
+            max_total_tokens=effective_total_tokens,
+            max_cost_usd=effective_cost_usd,
+            model_context_window=catalog.context_length,
+            model_max_completion_tokens=catalog.max_completion_tokens,
+            prompt_price_per_token=catalog.prompt_price,
+            completion_price_per_token=catalog.completion_price,
             allow_repeat_reason=allow_repeat_reason,
         )
         run_id = manifest.run_id
-        typer.echo(json.dumps({"run_id": run_id, "state": str(run_dir), "status": "ready"}, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "state": str(run_dir),
+                    "status": "ready",
+                    "model_context_window": catalog.context_length,
+                    "model_max_completion_tokens": catalog.max_completion_tokens,
+                    "output_tokens_per_turn": effective_output_tokens,
+                    "max_total_tokens": effective_total_tokens,
+                    "max_cost_usd": effective_cost_usd,
+                },
+                sort_keys=True,
+            )
+        )
     asyncio.run(
         run_openrouter_visit(
             data_repo=data_repo,

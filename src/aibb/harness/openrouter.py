@@ -19,6 +19,9 @@ from harn_ai.types import (
     TextContent,
     TextEndEvent,
     TextStartEvent,
+    ThinkingContent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
     ToolCall,
     ToolCallEndEvent,
     ToolCallStartEvent,
@@ -77,9 +80,12 @@ def _messages(context: Context) -> list[dict[str, Any]]:
         elif message.role == "assistant":
             tool_calls = []
             text = []
+            reasoning = []
             for block in message.content:
                 if block.type == "text":
                     text.append(block.text)
+                elif block.type == "thinking":
+                    reasoning.append(block.thinking)
                 elif block.type == "toolCall":
                     tool_calls.append(
                         {
@@ -94,6 +100,8 @@ def _messages(context: Context) -> list[dict[str, Any]]:
             payload: dict[str, Any] = {"role": "assistant", "content": "\n".join(text) or None}
             if tool_calls:
                 payload["tool_calls"] = tool_calls
+            if reasoning:
+                payload["reasoning"] = "\n".join(reasoning)
             messages.append(payload)
         elif message.role == "toolResult":
             messages.append(
@@ -178,22 +186,38 @@ class OpenRouterAdapter:
                 for tool in (context.tools or [])
             ],
             "tool_choice": "auto",
-            "max_tokens": self.max_output_tokens,
+            "max_tokens": min(self.max_output_tokens, model.maxTokens),
             "stream": False,
         }
         if not payload["tools"]:
             payload.pop("tools")
             payload.pop("tool_choice")
+        estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
+        available_output = model.contextWindow - estimated_input
+        if available_output < 1:
+            message = f"Estimated input ({estimated_input}) exceeds the model context window ({model.contextWindow})"
+            self.session.append(
+                "provider_error",
+                {"reservation_key": reservation_key, "type": "ContextWindowError", "message": message},
+                "private_provider",
+            )
+            output.stopReason = "error"
+            output.errorMessage = message
+            stream.push(ErrorEvent(reason="error", error=output))
+            stream.end()
+            return
+        effective_output = min(int(payload["max_tokens"]), available_output)
+        payload["max_tokens"] = effective_output
         self.last_payload = payload
         estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
         reserved_cost = (
-            estimated_input * self.prompt_price_per_token + self.max_output_tokens * self.completion_price_per_token
+            estimated_input * self.prompt_price_per_token + effective_output * self.completion_price_per_token
         )
         requested = LedgerUsage(
             calls=1,
             input_tokens=estimated_input,
-            output_tokens=self.max_output_tokens,
-            total_tokens=estimated_input + self.max_output_tokens,
+            output_tokens=effective_output,
+            total_tokens=estimated_input + effective_output,
             cost_usd=reserved_cost,
             request_bytes=len(json.dumps(payload, ensure_ascii=False).encode()),
         )
@@ -278,6 +302,13 @@ class OpenRouterAdapter:
                 else ("length" if finish_reason == "length" else "stop")
             )
             stream.push(StartEvent(partial=output))
+            reasoning = message.get("reasoning")
+            if isinstance(reasoning, str) and reasoning:
+                block = ThinkingContent(thinking=reasoning, thinkingSignature="openrouter-reasoning")
+                output.content.append(block)
+                index = len(output.content) - 1
+                stream.push(ThinkingStartEvent(contentIndex=index, partial=output))
+                stream.push(ThinkingEndEvent(contentIndex=index, content=reasoning, partial=output))
             content = message.get("content")
             if isinstance(content, str) and content:
                 block = TextContent(text=content)

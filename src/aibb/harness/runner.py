@@ -84,6 +84,10 @@ def create_run_manifest(
     max_provider_turns: int,
     max_total_tokens: int,
     max_cost_usd: float,
+    model_context_window: int,
+    model_max_completion_tokens: int | None,
+    prompt_price_per_token: float,
+    completion_price_per_token: float,
     allow_repeat_reason: str | None,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
@@ -97,7 +101,7 @@ def create_run_manifest(
         )
     now = datetime.now(UTC)
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    author_id = _slug(f"openrouter-{model_id}-{now.strftime('%Y%m%d')}", 79)
+    author_id = _slug(f"openrouter-{model_id}-{run_id[-8:]}", 79)
     manifest = RunManifest(
         run_id=run_id,
         created_at=now,
@@ -118,6 +122,10 @@ def create_run_manifest(
         contribution_quota=contribution_quota,
         max_new_threads=contribution_quota,
         max_output_tokens_per_turn=max_output_tokens,
+        model_context_window=model_context_window,
+        model_max_completion_tokens=model_max_completion_tokens,
+        prompt_price_per_token=prompt_price_per_token,
+        completion_price_per_token=completion_price_per_token,
         inference_budget=BudgetLimits(
             max_calls=max_provider_turns,
             max_input_tokens=max_total_tokens,
@@ -195,7 +203,7 @@ async def run_openrouter_visit(
     catalog = await fetch_openrouter_model(manifest.identity.model_name)
     store = SessionStore(run_dir / "session", manifest.run_id)
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
-    max_output_tokens = manifest.max_output_tokens_per_turn
+    max_output_tokens = catalog.clamp_output_tokens(manifest.max_output_tokens_per_turn)
     model = openrouter_model(
         manifest.identity.model_name,
         context_window=catalog.context_length,

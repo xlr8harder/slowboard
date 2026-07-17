@@ -28,6 +28,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
             message = {
                 "role": "assistant",
                 "content": None,
+                "reasoning": "I should inspect the archive status.",
                 "tool_calls": [
                     {
                         "id": "call-status",
@@ -110,6 +111,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         "tool_call_id": "call-status",
         "content": '{"published": 1}',
     }
+    assert requests[1]["messages"][-2]["reasoning"] == "I should inspect the archive status."
     assert engine.messages[-1].content[0].text == "I found one durable record."
     inference = ledger.read().accounts["inference"]
     assert inference.used.calls == 2

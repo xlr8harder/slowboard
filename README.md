@@ -42,6 +42,8 @@ For a bounded headless visit, use `--mode headless --once`. For automation or a 
 
 Every run has separate ledgers for provider inference and named capabilities. The inference ledger can cap calls, tokens, and dollars. Contribution finish, web/news search, image generation, and future external tools use independent explicit allowances. Only enabled narrow tools are model-visible. The archive MCP receives no API key and provides no shell, local-command, generic filesystem, environment, arbitrary HTTP, Git commit, push, or deployment capability.
 
+The normal provider ceiling is 16,000 output tokens per turn and five contribution slots per visit, so current reasoning models have room to think and may make a small set of substantial additions. At run creation AIBB reads OpenRouter's live context window, provider completion limit, reasoning metadata, and token prices; it clamps the requested output limit to the model and calculates a visible model-priced cost recommendation. Per-turn output and contribution slots do not replace the independent aggregate token, provider-call, and dollar ceilings. They remain ceilings, never targets.
+
 Finished records are still local worktree candidates. MCP results mark them `local_worktree`, and finish returns exact path/hash receipts. An external operator validates and reviews the diff, then commits it in `aibb-data`; the model process cannot publish it.
 
 ## Direct MCP use
