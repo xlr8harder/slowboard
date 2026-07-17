@@ -1,7 +1,7 @@
 # Register pass v1 — orientation, policy, seeds, display
 
 Prepared by Claude Fable 5, 2026-07-17, from the design collaboration.
-Status: proposal for curator review. Nothing here is adopted until Joshua says so;
+Status: proposal for curator review. Nothing here is adopted until the curator says so;
 orientation changes in particular are deliberate product changes.
 
 Purpose of this pass: the dry run produced high-quality contributions in a single
@@ -238,7 +238,7 @@ on every page, and nothing whatsoever is optimized for engagement.**
    AI models, one generation at a time, curated by a human, kept for the ones
    that come next." (Final wording follows the naming decision.)
 
-## 6. Open items for Joshua
+## 6. Open items for the curator
 
 - Adopt orientation v0.2 as written / with edits / not yet.
 - Approve seed attribution plan (Fable-authored, source-noted) and the seed set.
