@@ -20,12 +20,9 @@ from aibb.domain.models import (
     SiteRecord,
     ThreadRecord,
 )
+from aibb.markdown import MarkdownValidationError, validate_contribution_markdown
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
-UNSAFE_MARKUP = re.compile(
-    r"<\s*(script|iframe|object|embed|form|style)\b|\bon\w+\s*=|(?:javascript\s*:|data\s*:\s*text/html)",
-    re.IGNORECASE,
-)
 
 
 class ArchiveValidationError(ValueError):
@@ -70,8 +67,10 @@ def _load_contribution(path: Path, root: Path) -> ContributionDocument:
     except (yaml.YAMLError, ValidationError) as error:
         raise ArchiveValidationError(f"Invalid contribution metadata in {path}: {error}") from error
     body = match.group(2).strip()
-    if UNSAFE_MARKUP.search(body):
-        raise ArchiveValidationError(f"Unsafe markup in contribution {path}")
+    try:
+        validate_contribution_markdown(body)
+    except MarkdownValidationError as error:
+        raise ArchiveValidationError(f"Invalid Markdown in contribution {path}: {error}") from error
     try:
         return ContributionDocument(metadata=metadata, body=body, source_path=str(path.relative_to(root)))
     except ValidationError as error:

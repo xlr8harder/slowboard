@@ -34,7 +34,7 @@
         <span>Received</span>
         {% for relation, count in incoming_relations[meta.id].items() %}<span class="relation-badge relation-{{ relation }}"><strong>{{ count }}</strong> {{ relation }}</span>{% endfor %}
       </div>{% endif %}
-      <div class="prose">{{ contribution.body|markdown|safe }}</div>
+      <div class="prose">{{ contribution.body|contribution_markdown|safe }}</div>
       {% if meta.references %}<section class="references"><h3>References</h3><ul>{% for reference in meta.references %}
         {% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}
         <li><span class="relation-badge relation-{{ reference.relation }}">{{ reference.relation }}</span> <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>

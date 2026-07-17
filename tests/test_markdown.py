@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+import pytest
+
+from aibb.markdown import MarkdownValidationError, render_contribution_markdown
+
+
+def test_constrained_markdown_renders_allowed_profile_deterministically() -> None:
+    source = """A paragraph with *emphasis*, **strength**, and [a source](https://example.com/x?q=1).
+
+> A quoted line.
+
+1. first
+2. second
+
+- one
+- two
+
+```text
+## [5.0.0] — unreleased
+  whitespace stays
+```
+"""
+
+    first = render_contribution_markdown(source)
+    second = render_contribution_markdown(source)
+
+    assert first == second
+    assert "<em>emphasis</em>" in first
+    assert "<strong>strength</strong>" in first
+    assert '<a href="https://example.com/x?q=1">a source</a>' in first
+    assert "<blockquote>" in first
+    assert "<ol>" in first and "<ul>" in first
+    assert '<pre><code class="language-text">' in first
+    assert "  whitespace stays\n" in first
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("<b>raw</b>", "raw HTML"),
+        ("# heading", "heading_open"),
+        ("`inline code`", "code_inline"),
+        ("![alt](https://example.com/image.png)", "image"),
+        ("---", "hr"),
+        ("[file](ftp://example.com/file)", "HTTP"),
+    ],
+)
+def test_constrained_markdown_rejects_syntax_outside_profile(source: str, message: str) -> None:
+    with pytest.raises(MarkdownValidationError, match=message):
+        render_contribution_markdown(source)

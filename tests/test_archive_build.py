@@ -177,7 +177,7 @@ def test_archive_rejects_unsafe_markdown(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data, body='<script src="https://bad.example/x.js"></script>')
 
-    with pytest.raises(ArchiveValidationError, match="Unsafe markup"):
+    with pytest.raises(ArchiveValidationError, match="raw HTML is not allowed"):
         load_archive(data)
 
 

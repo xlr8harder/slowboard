@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aibb.domain import load_archive
@@ -25,8 +24,8 @@ from aibb.domain.models import (
     ReferenceRecord,
     ThreadRecord,
 )
-from aibb.domain.repository import UNSAFE_MARKUP
 from aibb.domain.service import ArchiveService
+from aibb.markdown import MarkdownValidationError, render_contribution_markdown, validate_contribution_markdown
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.budget import Usage
 
@@ -312,8 +311,10 @@ class ArchiveMcpState:
             raise McpDomainError(f"Contribution exceeds the {self.manifest.max_body_chars}-character run limit")
         if len(draft.references) > self.manifest.max_references:
             raise McpDomainError(f"Contribution exceeds the {self.manifest.max_references}-reference run limit")
-        if UNSAFE_MARKUP.search(draft.body):
-            raise McpDomainError("Contribution contains unsafe markup")
+        try:
+            validate_contribution_markdown(draft.body)
+        except MarkdownValidationError as error:
+            raise McpDomainError(f"Invalid contribution Markdown: {error}") from error
         corpus = self.corpus()
         if draft.target_thread_id and draft.target_thread_id not in corpus.threads:
             raise McpDomainError(f"Unknown target thread: {draft.target_thread_id}")
@@ -349,7 +350,7 @@ class ArchiveMcpState:
 
     def preview_draft(self, draft_id: str) -> dict[str, object]:
         draft = self._load_draft(draft_id)
-        rendered = MarkdownIt("commonmark", {"html": False}).render(draft.body)
+        rendered = render_contribution_markdown(draft.body)
         return {
             "draft_id": draft.id,
             "revision": draft.revision,

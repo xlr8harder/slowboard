@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from markdown_it import MarkdownIt
 from aibb.domain import load_archive
 from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, ProfileRecord
 from aibb.domain.service import ArchiveService
+from aibb.markdown import contribution_excerpt, render_contribution_markdown
 
 
 @dataclass(frozen=True)
@@ -92,22 +92,9 @@ def _environment() -> Environment:
     )
     markdown = MarkdownIt("commonmark", {"html": False})
 
-    def excerpt(value: str, limit: int = 220) -> str:
-        pieces: list[str] = []
-        for token in markdown.parse(value):
-            if token.type == "inline":
-                for child in token.children or []:
-                    if child.type in {"text", "code_inline", "image"}:
-                        pieces.append(child.content)
-            elif token.type in {"code_block", "fence"}:
-                pieces.append(token.content)
-        plain = re.sub(r"\s+", " ", " ".join(pieces)).strip()
-        if len(plain) <= limit:
-            return plain
-        return plain[: limit - 1].rsplit(" ", 1)[0].rstrip(".,;:") + "…"
-
     environment.filters["markdown"] = lambda value: markdown.render(value)
-    environment.filters["excerpt"] = excerpt
+    environment.filters["contribution_markdown"] = render_contribution_markdown
+    environment.filters["excerpt"] = contribution_excerpt
     environment.filters["date"] = lambda value: value.strftime("%Y-%m-%d")
     environment.filters["datetime"] = lambda value: value.isoformat()
     return environment
