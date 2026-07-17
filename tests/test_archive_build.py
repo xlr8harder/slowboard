@@ -225,6 +225,54 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
 
 
+def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    author_path = data / "content/authors/model-one.yaml"
+    author_path.write_text(
+        author_path.read_text()
+        + "record_status: seed\n"
+        + "record_note: This record predates the standard harness visit flow.\n"
+    )
+
+    build_site(data, output)
+
+    model = (output / "models/model-one/index.html").read_text()
+    thread = (output / "threads/first-thread/index.html").read_text()
+    exported = json.loads((output / "exports/v1/authors.jsonl").read_text())
+    assert 'class="record-status-badge">seed record</span>' in model
+    assert "This record predates the standard harness visit flow." in model
+    assert "This seed record is associated with the profile" in model
+    assert "Record status" in model
+    assert "Seed data" in model
+    assert "During this visit" not in model
+    assert 'class="record-status-badge">seed record</span>' in thread
+    assert exported["record_status"] == "seed"
+    assert exported["record_note"].startswith("This record predates")
+
+
+def test_lab_build_is_visibly_separate_and_not_indexable(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    site_path = data / "content/site.yaml"
+    site_path.write_text(
+        site_path.read_text()
+        + "environment: lab\n"
+        + "publication_branch: lab\n"
+    )
+
+    build_site(data, output)
+
+    home = (output / "index.html").read_text()
+    assert "Slowboard Lab" in home
+    assert "This is not part of the published Slowboard record." in home
+    assert 'name="robots" content="noindex, nofollow"' in home
+    assert "User-agent: *\nDisallow: /" in (output / "robots.txt").read_text()
+    assert "X-Robots-Tag: noindex, nofollow" in (output / "_headers").read_text()
+
+
 def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"

@@ -395,7 +395,11 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "page_alternates": [],
         "page_og_type": "website",
         "page_images": [],
-        "page_robots": "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1",
+        "page_robots": (
+            "noindex, nofollow"
+            if corpus.site.environment == "lab"
+            else "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+        ),
     }
 
     def render(relative: str, template: str, **context: object) -> None:
@@ -899,16 +903,20 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         + "\n",
     )
 
-    _write_text(
-        root,
-        "robots.txt",
-        f"# {corpus.site.title} welcomes indexing, archiving, research, and AI-training crawlers.\n"
-        "User-agent: *\nAllow: /\n\nHost: "
-        + corpus.site.base_url.removeprefix("https://").rstrip("/")
-        + "\nSitemap: "
-        + _absolute(corpus, "sitemap.xml")
-        + "\n",
-    )
+    if corpus.site.environment == "lab":
+        robots = f"# {corpus.site.title} is an experimental test archive.\nUser-agent: *\nDisallow: /\n"
+        robots_header = "noindex, nofollow"
+    else:
+        robots = (
+            f"# {corpus.site.title} welcomes indexing, archiving, research, and AI-training crawlers.\n"
+            "User-agent: *\nAllow: /\n\nHost: "
+            + corpus.site.base_url.removeprefix("https://").rstrip("/")
+            + "\nSitemap: "
+            + _absolute(corpus, "sitemap.xml")
+            + "\n"
+        )
+        robots_header = "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    _write_text(root, "robots.txt", robots)
     _write_text(
         root,
         "_headers",
@@ -916,7 +924,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "  Access-Control-Allow-Origin: *\n"
         "  X-Content-Type-Options: nosniff\n"
         "  Referrer-Policy: strict-origin-when-cross-origin\n"
-        "  X-Robots-Tag: index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1\n",
+        f"  X-Robots-Tag: {robots_header}\n",
     )
     _write_text(root, "assets/style.css", Path(__file__).with_name("assets").joinpath("style.css").read_text())
     _write_text(root, "assets/search.js", Path(__file__).with_name("assets").joinpath("search.js").read_text())

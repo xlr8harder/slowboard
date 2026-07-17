@@ -35,6 +35,8 @@ class PublicationManifest(BaseModel):
 
     schema_version: Literal[1] = 1
     site: str = Field(pattern=r"^https://")
+    channel: Literal["production", "lab"] = "production"
+    branch: str = "main"
     builder: RepositoryRevision
     data: RepositoryRevision
 
@@ -109,16 +111,25 @@ def prepare_publication(*, code_repo: Path, data_repo: Path, site_repo: Path) ->
     _require_clean(code_repo, role="Builder repository", include_untracked=False)
     _require_clean(data_repo, role="Data repository")
     _require_clean(site_repo, role="Generated-site repository")
+    corpus = load_archive(data_repo)
+    site_branch = _git(site_repo, "branch", "--show-current")
+    if site_branch != corpus.site.publication_branch:
+        raise PublicationError(
+            f"{corpus.site.environment.title()} data must publish from the "
+            f"{corpus.site.publication_branch!r} generated-site branch, not {site_branch!r}"
+        )
 
     with tempfile.TemporaryDirectory(prefix="slowboard-publication-") as temporary:
         output = Path(temporary) / "site"
-        corpus = build_site(data_repo, output)
+        build = build_site(data_repo, output)
         manifest = PublicationManifest(
-            site=load_archive(data_repo).site.base_url,
+            site=corpus.site.base_url,
+            channel=corpus.site.environment,
+            branch=corpus.site.publication_branch,
             builder=RepositoryRevision(repository=_repository_url(code_repo), revision=_revision(code_repo)),
             data=RepositoryRevision(repository=_repository_url(data_repo), revision=_revision(data_repo)),
         )
-        _replace_site_tree(site_repo, corpus.output)
+        _replace_site_tree(site_repo, build.output)
     (site_repo / "publication.json").write_text(
         json.dumps(manifest.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -133,6 +144,14 @@ def check_publication(*, code_repo: Path, data_repo: Path, site_repo: Path) -> d
     _require_clean(code_repo, role="Builder repository", include_untracked=False)
     _require_clean(data_repo, role="Data repository")
     manifest = PublicationManifest.model_validate_json((site_repo / "publication.json").read_text(encoding="utf-8"))
+    corpus = load_archive(data_repo)
+    site_branch = _git(site_repo, "branch", "--show-current")
+    if site_branch != manifest.branch:
+        raise PublicationError("Publication branch does not match the generated-site worktree branch")
+    if manifest.channel != corpus.site.environment or manifest.branch != corpus.site.publication_branch:
+        raise PublicationError("Publication channel does not match the data repository configuration")
+    if manifest.site != corpus.site.base_url:
+        raise PublicationError("Publication site URL does not match the data repository configuration")
     if manifest.builder.revision != _revision(code_repo):
         raise PublicationError("Publication builder revision does not match the checked-out code revision")
     if manifest.data.revision != _revision(data_repo):
@@ -157,6 +176,8 @@ def check_publication(*, code_repo: Path, data_repo: Path, site_repo: Path) -> d
         )
     return {
         "status": "valid",
+        "channel": manifest.channel,
+        "branch": manifest.branch,
         "builder_revision": manifest.builder.revision,
         "data_revision": manifest.data.revision,
         "files": len(actual) + 1,
@@ -173,9 +194,17 @@ def deploy_publication(
     site_repo = site_repo.resolve()
     _require_clean(site_repo, role="Generated-site repository")
     try:
-        PublicationManifest.model_validate_json((site_repo / "publication.json").read_text(encoding="utf-8"))
+        manifest = PublicationManifest.model_validate_json(
+            (site_repo / "publication.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError) as error:
         raise PublicationError("Generated-site repository does not contain a valid publication.json") from error
+    if branch != manifest.branch:
+        raise PublicationError(
+            f"Deployment branch {branch!r} does not match publication branch {manifest.branch!r}"
+        )
+    if _git(site_repo, "branch", "--show-current") != manifest.branch:
+        raise PublicationError("Generated-site worktree is not on the publication branch")
     head = _revision(site_repo)
     upstream = _git(site_repo, "rev-parse", "@{upstream}")
     if upstream != head:

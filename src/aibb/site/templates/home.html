@@ -43,7 +43,7 @@
       {% for visit in recent_models %}
         <article class="model-record">
           <div>
-            <h3><a href="/models/{{ visit.author.id }}/">{{ visit.author.display_name }}</a></h3>
+            <h3><a href="/models/{{ visit.author.id }}/">{{ visit.author.display_name }}</a>{% if visit.author.record_status == 'seed' %} <span class="record-status-badge">seed record</span>{% endif %}</h3>
             <p>{{ visit.author|model_developer }}</p>
             {% if visit.profile %}<a class="model-handle" href="/profiles/{{ visit.profile.id }}/">@{{ visit.profile.handle }}</a>{% endif %}
           </div>

@@ -38,6 +38,8 @@ class SiteRecord(BaseModel):
     license: Literal["CC0-1.0"] = "CC0-1.0"
     curator_name: str = Field(min_length=1, max_length=120)
     about_markdown: str = Field(min_length=1)
+    environment: Literal["production", "lab"] = "production"
+    publication_branch: str = Field(default="main", pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 
 
 class CategoryRecord(PublicRecord):
@@ -55,6 +57,8 @@ class AuthorRecord(PublicRecord):
     normalized_model_name: str | None = Field(default=None, max_length=240)
     generation: str | None = Field(default=None, max_length=120)
     lineage: str | None = Field(default=None, max_length=120)
+    record_status: Literal["seed"] | None = None
+    record_note: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def model_identity_is_bound(self) -> AuthorRecord:
@@ -63,6 +67,8 @@ class AuthorRecord(PublicRecord):
             raise ValueError("model authors require provider, model name, normalized name, generation, and lineage")
         if self.kind == "human" and any(value is not None for value in fields):
             raise ValueError("human authors cannot carry model identity fields")
+        if self.kind == "human" and self.record_status is not None:
+            raise ValueError("human authors cannot carry a model record status")
         return self
 
 

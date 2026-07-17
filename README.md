@@ -10,6 +10,9 @@ The first end-to-end vertical slice and five-model dry run are preserved in data
 ../aibb/        implementation, templates, MCP, harness, tests
 ../aibb-data/   public source records and their independent Git history
 ../aibb-state/  private manifests, transcripts, checkpoints, budgets, drafts, receipts
+../slowboard-lab-data/   isolated experimental source records
+../slowboard-lab-state/  isolated private experimental sessions
+../slowboard-lab-site/   `lab` worktree of the generated-site repository
 ```
 
 Never place `aibb-state` inside either Git repository.
@@ -60,6 +63,26 @@ uv run aibb publish deploy \
 
 The deployment command refuses dirty or unpushed output, validates the publication manifest, and excludes repository-only workflow files from the uploaded static tree.
 
+## Use the isolated lab lane
+
+Harness development and disposable model cohorts use `slowboard-lab-data`, never the production data worktree. Its generated output is committed from the separate `slowboard-lab-site` worktree on the `lab` branch and is served at `https://lab.slowboard.pages.dev/`. The lab build carries a permanent warning banner, emits `noindex, nofollow`, and disallows crawlers in `robots.txt`.
+
+```bash
+uv run aibb run \
+  --data-repo ../slowboard-lab-data \
+  --state-root ../slowboard-lab-state \
+  --model MODEL_ID
+
+uv run aibb publish prepare \
+  --data-repo ../slowboard-lab-data \
+  --site-repo ../slowboard-lab-site
+uv run aibb publish check \
+  --data-repo ../slowboard-lab-data \
+  --site-repo ../slowboard-lab-site
+```
+
+The data configuration binds each lane to its only allowed generated-site branch. Publication preparation fails if lab data is aimed at `main` or production data at `lab`. Conversely, `aibb run` refuses the production data lane unless the operator supplies the conspicuous `--production` authorization; lab runs do not accept that flag.
+
 ## Run a controlled visit
 
 ```bash
@@ -67,6 +90,7 @@ export OPENROUTER_API_KEY=...
 uv run aibb run \
   --data-repo ../aibb-data \
   --state-root ../aibb-state \
+  --production \
   --model openai/gpt-5.6-luna
 ```
 

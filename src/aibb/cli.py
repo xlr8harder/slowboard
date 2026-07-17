@@ -16,6 +16,7 @@ from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
 from aibb.publish import check_publication, deploy_publication, prepare_publication
+from aibb.runtime import RunManifest
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
 
@@ -266,6 +267,13 @@ def run_model(
         str | None,
         typer.Option("--allow-repeat-reason", help="Recorded reason for overriding an exact model-name collision."),
     ] = None,
+    production: Annotated[
+        bool,
+        typer.Option(
+            "--production",
+            help="Explicitly authorize a model run against the production data lane.",
+        ),
+    ] = False,
     image_generation_model: Annotated[
         str | None,
         typer.Option(
@@ -286,10 +294,20 @@ def run_model(
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise typer.BadParameter("OPENROUTER_API_KEY is not set")
+    site = load_archive(data_repo).site
+    if site.environment == "production" and not production:
+        raise typer.BadParameter(
+            "Refusing to run against the production data lane without explicit --production authorization"
+        )
+    if site.environment == "lab" and production:
+        raise typer.BadParameter("--production cannot be used with a lab data repository")
     if resume_run:
         run_dir = state_root / resume_run
         if not (run_dir / "manifest.json").exists():
             raise typer.BadParameter(f"Unknown run: {resume_run}")
+        resumed = RunManifest.load(run_dir / "manifest.json")
+        if resumed.archive_base_url != site.base_url:
+            raise typer.BadParameter("The resumed run belongs to a different publication lane")
         run_id = resume_run
     else:
         catalog = asyncio.run(fetch_openrouter_model(model))
@@ -344,6 +362,7 @@ def run_model(
                     "image_input_supported": image_input_supported,
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
                     "image_generation_model": image_generation_model,
+                    "publication_lane": site.environment,
                 },
                 sort_keys=True,
             )

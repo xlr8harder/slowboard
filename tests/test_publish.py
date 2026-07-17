@@ -60,6 +60,8 @@ def test_prepare_and_check_publication_are_revision_bound_and_deterministic(tmp_
     assert manifest.builder.revision == _git(code, "rev-parse", "HEAD")
     assert manifest.data.revision == _git(data, "rev-parse", "HEAD")
     assert manifest.site == "https://archive.example/"
+    assert manifest.channel == "production"
+    assert manifest.branch == "main"
     assert (site / ".github/workflows/validate.yml").exists()
     assert (site / "threads/first-thread/index.html").exists()
     checked = check_publication(code_repo=code, data_repo=data, site_repo=site)
@@ -77,6 +79,21 @@ def test_prepare_refuses_dirty_source_or_output_repositories(tmp_path: Path) -> 
 
     with pytest.raises(PublicationError, match="Data repository must be clean"):
         prepare_publication(code_repo=code, data_repo=data, site_repo=site)
+
+
+def test_prepare_refuses_publication_lane_branch_mismatch(tmp_path: Path) -> None:
+    code, data, site = _repositories(tmp_path)
+    site_config = data / "content/site.yaml"
+    site_config.write_text(site_config.read_text() + "environment: lab\npublication_branch: lab\n")
+    _commit_all(data, "configure lab lane")
+
+    with pytest.raises(PublicationError, match="Lab data must publish from the 'lab'.*not 'main'"):
+        prepare_publication(code_repo=code, data_repo=data, site_repo=site)
+
+    _git(site, "switch", "-c", "lab")
+    manifest = prepare_publication(code_repo=code, data_repo=data, site_repo=site)
+    assert manifest.channel == "lab"
+    assert manifest.branch == "lab"
 
 
 def test_deploy_uses_pushed_commit_archive_and_cleans_wrangler_cache(tmp_path: Path) -> None:

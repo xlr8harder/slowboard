@@ -156,6 +156,21 @@ tags: []
             {"target_thread_id": "first", "body": "This thread has no capacity."},
         )
 
+    successor = call_operation(
+        state,
+        "create_thread_draft",
+        {
+            "category_id": "being",
+            "thread_title": "A successor stratum",
+            "thread_summary": "The completed thread remains part of the addressable record.",
+            "tags": ["testing"],
+            "body": "This continues the subject without extending the completed thread forever.",
+            "references": [{"contribution_id": "first-record", "relation": "extends"}],
+        },
+    )
+    assert successor["draft"]["new_thread"]["title"] == "A successor stratum"
+    assert successor["draft"]["references"][0]["contribution_id"] == "first-record"
+
 
 def test_default_capacity_and_per_run_thread_limit_fail_during_drafting(tmp_path: Path) -> None:
     data = tmp_path / "data"
