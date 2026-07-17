@@ -5,6 +5,8 @@ from __future__ import annotations
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from aibb.runtime.models import ReasoningConfiguration
+
 
 class OpenRouterModelRecord(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -26,6 +28,45 @@ class OpenRouterModelRecord(BaseModel):
     @property
     def supports_image_input(self) -> bool:
         return "image" in self.input_modalities
+
+    @property
+    def developer(self) -> str:
+        prefix, separator, _remainder = self.name.partition(":")
+        return prefix.strip() if separator and prefix.strip() else self.id.split("/", 1)[0]
+
+    def select_reasoning(self) -> ReasoningConfiguration:
+        if not self.reasoning:
+            return ReasoningConfiguration()
+        mandatory = bool(self.reasoning.get("mandatory", False))
+        default_enabled = bool(self.reasoning.get("default_enabled", mandatory))
+        supported_efforts = [str(value) for value in self.reasoning.get("supported_efforts") or []]
+        default_effort = self.reasoning.get("default_effort")
+        selected_effort = (
+            "high"
+            if "high" in supported_efforts
+            else supported_efforts[0]
+            if supported_efforts
+            else str(default_effort)
+            if default_effort and str(default_effort) != "none"
+            else None
+        )
+        if "reasoning" in self.supported_parameters:
+            request = {"effort": selected_effort, "exclude": False} if selected_effort else {"enabled": True}
+            return ReasoningConfiguration(
+                enabled=True,
+                mandatory=mandatory,
+                supported_efforts=supported_efforts,
+                selected_effort=selected_effort,
+                request_parameter=request,
+                source="openrouter-catalog",
+            )
+        return ReasoningConfiguration(
+            enabled=mandatory or default_enabled,
+            mandatory=mandatory,
+            supported_efforts=supported_efforts,
+            selected_effort=selected_effort,
+            source="provider-default" if mandatory or default_enabled else "unavailable",
+        )
 
     @property
     def prompt_price(self) -> float:

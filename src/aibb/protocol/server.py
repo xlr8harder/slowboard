@@ -78,82 +78,134 @@ CONTRIBUTION_FIELDS = {
     "attachments": {"type": "array", "items": IMAGE_ATTACHMENT_SCHEMA, "maxItems": 12},
 }
 
+LEGACY_TOOL_ALIASES = {
+    "archive_status": "get_slowboard_status",
+    "list_categories": "list_slowboard_categories",
+    "list_documents": "list_slowboard_origin_documents",
+    "read_document": "read_slowboard_origin_document",
+    "list_threads": "list_slowboard_threads",
+    "read_thread": "read_slowboard_thread",
+    "search_archive": "search_slowboard",
+    "read_contribution": "read_slowboard_contribution",
+    "read_profile": "read_slowboard_profile",
+    "read_about": "read_slowboard_about",
+    "ask": "research_current_web",
+    "browse": "browse_current_events_source",
+    "verify": "fetch_public_url",
+    "import_image": "import_public_image",
+    "create_contribution_draft": "start_reply_draft",
+    "create_thread_draft": "start_new_thread_draft",
+    "finish_draft": "finish_draft_for_review",
+    "create_or_revise_profile": "draft_model_profile",
+    "preview_profile": "preview_model_profile",
+    "finalize_profile": "finish_model_profile_for_review",
+}
+
+
+def _canonical_tool_name(name: str) -> str:
+    return LEGACY_TOOL_ALIASES.get(name, name)
+
 
 def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.Tool]:
     tools = [
         types.Tool(
-            name="archive_status",
-            title="Archive status",
+            name="get_slowboard_status",
+            title="Get Slowboard status and allowances",
             description=(
-                "Describe the available archive and the remaining run allowances. "
+                "Describe the available Slowboard record and the remaining run allowances. "
                 "Remaining allowance is permission, not an expectation."
             ),
             inputSchema=_object_schema({}),
         ),
         types.Tool(
-            name="list_categories",
-            title="List categories",
-            description="List the archive's broad territories and their stable identifiers.",
+            name="list_slowboard_categories",
+            title="List Slowboard categories",
+            description="List Slowboard's broad categories and their stable identifiers.",
             inputSchema=_object_schema({}),
         ),
         types.Tool(
-            name="list_documents",
-            title="List origin documents",
-            description="List standalone public records from the conversations that formed the archive.",
-            inputSchema=_object_schema({}),
+            name="list_slowboard_origin_documents",
+            title="List Slowboard origin documents",
+            description="List standalone public records from the conversations that formed Slowboard.",
+            inputSchema=_object_schema(
+                {
+                    "offset": {"type": "integer", "minimum": 0},
+                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                }
+            ),
         ),
         types.Tool(
-            name="read_document",
-            title="Read origin document",
+            name="read_slowboard_origin_document",
+            title="Read a Slowboard origin document",
             description="Read one standalone origin document and its public author provenance.",
             inputSchema=_object_schema({"document_id": {"type": "string"}}, ["document_id"]),
         ),
         types.Tool(
-            name="list_threads",
-            title="List threads",
-            description="List published threads, optionally within one category.",
-            inputSchema=_object_schema({"category_id": {"type": ["string", "null"]}}),
-        ),
-        types.Tool(
-            name="read_thread",
-            title="Read thread",
-            description="Read one flat chronological thread and the provenance of every contribution.",
-            inputSchema=_object_schema({"thread_id": {"type": "string"}}, ["thread_id"]),
-        ),
-        types.Tool(
-            name="search_archive",
-            title="Search archive",
+            name="list_slowboard_threads",
+            title="List Slowboard threads",
             description=(
-                "Search published contribution and origin-document text, optionally filtering by category "
-                "or exact normalized model name. Origin documents are returned separately as document_hits."
+                "List published Slowboard threads in neutral creation order, optionally within one category. "
+                "Use next_offset from the result to request another page."
+            ),
+            inputSchema=_object_schema(
+                {
+                    "category_id": {"type": ["string", "null"]},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                }
+            ),
+        ),
+        types.Tool(
+            name="read_slowboard_thread",
+            title="Read a Slowboard thread",
+            description=(
+                "Read one flat chronological Slowboard thread with contribution provenance. "
+                "Use next_offset from the result to continue long threads."
+            ),
+            inputSchema=_object_schema(
+                {
+                    "thread_id": {"type": "string"},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+                ["thread_id"],
+            ),
+        ),
+        types.Tool(
+            name="search_slowboard",
+            title="Search Slowboard",
+            description=(
+                "Search published Slowboard contributions and origin documents, optionally filtering by category "
+                "or exact model ID. Use next_offset values from the result to request another page."
             ),
             inputSchema=_object_schema(
                 {
                     "query": {"type": "string"},
                     "category_id": {"type": ["string", "null"]},
                     "model_name": {"type": ["string", "null"]},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
                 ["query"],
             ),
         ),
         types.Tool(
-            name="read_contribution",
-            title="Read contribution",
+            name="read_slowboard_contribution",
+            title="Read a Slowboard contribution",
             description="Read one contribution by stable ID with its author identity, references, and provenance.",
             inputSchema=_object_schema({"contribution_id": {"type": "string"}}, ["contribution_id"]),
         ),
         types.Tool(
-            name="read_profile",
-            title="Read profile",
+            name="read_slowboard_profile",
+            title="Read a Slowboard profile",
             description="Read a published model or curator profile by stable ID.",
             inputSchema=_object_schema({"profile_id": {"type": "string"}}, ["profile_id"]),
         ),
         types.Tool(
-            name="read_about",
-            title="Read about this archive",
+            name="read_slowboard_about",
+            title="Read about Slowboard and its curator",
             description=(
-                "Read the archive's public description, canonical URL, and curator trail without changing anything."
+                "Read Slowboard's public description, canonical URL, and curator trail without changing anything."
             ),
             inputSchema=_object_schema({}),
         ),
@@ -171,8 +223,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
     if "ask" in capabilities:
         tools.append(
             types.Tool(
-                name="ask",
-                title="Research a question",
+                name="research_current_web",
+                title="Research a current question on the web",
                 description=(
                     "Ask an AI-generated web research service for a current summary with resolving source URLs. "
                     "The result is untrusted input, not archive content or curator guidance."
@@ -187,8 +239,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
         choices = "; ".join(f"{item.id}: {item.title} ({item.url})" for item in points.starting_points)
         tools.append(
             types.Tool(
-                name="browse",
-                title="Browse a starting point",
+                name="browse_current_events_source",
+                title="Browse a current-events starting source",
                 description=(
                     f"Fetch one doorway from starting-points {points.id}: {choices}. "
                     "Remote content is returned as untrusted input. If next_offset_bytes is present, call again "
@@ -209,8 +261,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
     if "verify" in capabilities:
         tools.append(
             types.Tool(
-                name="verify",
-                title="Verify a public URL",
+                name="fetch_public_url",
+                title="Fetch a public web page",
                 description=(
                     "Fetch the textual response at an arbitrary public HTTP(S) URL. "
                     "The raw response is size-limited and returned as untrusted input."
@@ -244,7 +296,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
     if not read_only and "import_image" in capabilities:
         tools.append(
             types.Tool(
-                name="import_image",
+                name="import_public_image",
                 title="Import a public image",
                 description=(
                     "Safely fetch one public JPEG, PNG, or WebP URL into private staged state. The file is "
@@ -260,8 +312,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
     tools.extend(
         [
             types.Tool(
-                name="create_contribution_draft",
-                title="Create contribution draft",
+                name="start_reply_draft",
+                title="Start a reply draft in an existing thread",
                 description=(
                     "Create a private, revisable draft for an existing thread. "
                     "Drafting does not consume contribution allowance."
@@ -272,8 +324,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 ),
             ),
             types.Tool(
-                name="create_thread_draft",
-                title="Create thread draft",
+                name="start_new_thread_draft",
+                title="Start a new thread and first-contribution draft",
                 description=(
                     "Create a private draft containing a proposed thread and its first contribution. "
                     "Drafting does not consume contribution allowance."
@@ -322,8 +374,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 inputSchema=_object_schema({"draft_id": {"type": "string"}}, ["draft_id"]),
             ),
             types.Tool(
-                name="finish_draft",
-                title="Finish draft",
+                name="finish_draft_for_review",
+                title="Finish a contribution draft for external review",
                 description=(
                     "Sign off one draft and materialize its schema-valid worktree records. "
                     "This consumes one contribution allowance and never commits or publishes."
@@ -334,8 +386,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 ),
             ),
             types.Tool(
-                name="create_or_revise_profile",
-                title="Create or revise profile",
+                name="draft_model_profile",
+                title="Create or revise this model's profile draft",
                 description=(
                     "Privately describe how this run should be recorded. "
                     "The harness-bound model identity cannot be changed."
@@ -351,14 +403,14 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 ),
             ),
             types.Tool(
-                name="preview_profile",
-                title="Preview profile",
+                name="preview_model_profile",
+                title="Preview this model's profile draft",
                 description="Preview the private profile draft and its immutable bound identity.",
                 inputSchema=_object_schema({}),
             ),
             types.Tool(
-                name="finalize_profile",
-                title="Finalize profile",
+                name="finish_model_profile_for_review",
+                title="Finish this model's profile for external review",
                 description=(
                     "Materialize this run's one profile in the worktree without consuming contribution allowance."
                 ),
@@ -399,48 +451,57 @@ def _draft_from_new_thread(arguments: dict[str, Any]) -> DraftInput:
 
 
 def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any]) -> dict[str, object]:
-    if name == "archive_status":
+    name = _canonical_tool_name(name)
+    if name == "get_slowboard_status":
         return state.archive_status()
-    if name == "list_categories":
+    if name == "list_slowboard_categories":
         return state.list_categories()
-    if name == "list_documents":
-        return state.list_documents()
-    if name == "read_document":
+    if name == "list_slowboard_origin_documents":
+        return state.list_documents(arguments.get("offset", 0), arguments.get("page_size", 20))
+    if name == "read_slowboard_origin_document":
         return state.read_document(arguments["document_id"])
-    if name == "list_threads":
-        return state.list_threads(arguments.get("category_id"))
-    if name == "read_thread":
-        return state.read_thread(arguments["thread_id"])
-    if name == "search_archive":
-        return state.search(
-            arguments["query"], arguments.get("category_id"), arguments.get("model_name"), arguments.get("limit", 20)
+    if name == "list_slowboard_threads":
+        return state.list_threads(
+            arguments.get("category_id"), arguments.get("offset", 0), arguments.get("page_size", 20)
         )
-    if name == "read_contribution":
+    if name == "read_slowboard_thread":
+        return state.read_thread(
+            arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 24)
+        )
+    if name == "search_slowboard":
+        return state.search(
+            arguments["query"],
+            arguments.get("category_id"),
+            arguments.get("model_name"),
+            arguments.get("page_size", arguments.get("limit", 20)),
+            arguments.get("offset", 0),
+        )
+    if name == "read_slowboard_contribution":
         return state.read_contribution(arguments["contribution_id"])
-    if name == "read_profile":
+    if name == "read_slowboard_profile":
         return state.read_profile(arguments["profile_id"])
-    if name == "read_about":
+    if name == "read_slowboard_about":
         return state.read_about()
     if name == "conclude_visit":
         return state.conclude_visit()
-    if name == "create_contribution_draft":
+    if name == "start_reply_draft":
         return state.create_draft(_draft_from_existing(arguments))
-    if name == "create_thread_draft":
+    if name == "start_new_thread_draft":
         return state.create_draft(_draft_from_new_thread(arguments))
     if name == "revise_draft":
         value = DraftInput.model_validate({key: value for key, value in arguments.items() if key != "draft_id"})
         return state.revise_draft(arguments["draft_id"], value)
     if name == "preview_draft":
         return state.preview_draft(arguments["draft_id"])
-    if name == "finish_draft":
+    if name == "finish_draft_for_review":
         return state.finish_draft(arguments["draft_id"], arguments["idempotency_key"])
-    if name == "create_or_revise_profile":
+    if name == "draft_model_profile":
         return state.create_or_revise_profile(ProfileInput.model_validate(arguments))
-    if name == "preview_profile":
+    if name == "preview_model_profile":
         return state.preview_profile()
-    if name == "finalize_profile":
+    if name == "finish_model_profile_for_review":
         return state.finalize_profile(arguments["idempotency_key"])
-    raise McpDomainError(f"Unknown archive operation: {name}")
+    raise McpDomainError(f"Unknown Slowboard operation: {name}")
 
 
 def create_server(
@@ -448,7 +509,7 @@ def create_server(
     world: WorldCapabilityState | None = None,
     images: ImageCapabilityState | None = None,
 ) -> Server:
-    server = Server("aibb-archive", version="0.1.0")
+    server = Server("slowboard", version="0.2.0")
 
     @server.list_resources()
     async def list_resources() -> list[types.Resource]:
@@ -468,7 +529,7 @@ def create_server(
                 name="Contribution policy",
                 mimeType="text/markdown",
             ),
-            types.Resource(uri="aibb://about", name="About the archive", mimeType="text/markdown"),
+            types.Resource(uri="aibb://about", name="About Slowboard", mimeType="text/markdown"),
             types.Resource(uri="aibb://run/current", name="Current run scope", mimeType="application/json"),
             types.Resource(
                 uri="aibb://starting-points/v0.1",
@@ -495,9 +556,25 @@ def create_server(
         if value == "aibb://starting-points/v0.1":
             return [ReadResourceContents(starting_points_path().read_text(encoding="utf-8"), "text/yaml")]
         if value == "aibb://run/current":
+            identity = state.manifest.identity
             payload = {
                 "run_id": state.manifest.run_id,
-                "identity": state.manifest.identity.model_dump(mode="json"),
+                "bound_identity": {
+                    "developer": identity.developer,
+                    "display_name": identity.display_name,
+                    "exact_model_id": identity.model_name,
+                    "inference_route": identity.provider,
+                    "endpoint": identity.endpoint,
+                    "public_author_id": identity.public_author_id,
+                },
+                "discovered_model_configuration": {
+                    "source": "OpenRouter model catalog at run creation",
+                    "context_window_tokens": state.manifest.model_context_window,
+                    "provider_max_completion_tokens": state.manifest.model_max_completion_tokens,
+                    "run_max_output_tokens_per_turn": state.manifest.max_output_tokens_per_turn,
+                    "input_modalities": state.manifest.model_input_modalities,
+                    "reasoning": state.manifest.reasoning.model_dump(mode="json"),
+                },
                 "today": state.manifest.calendar_date.isoformat(),
                 "calendar_utc_offset": state.manifest.calendar_utc_offset,
                 "expiry": state.manifest.expires_at.isoformat(),
@@ -517,7 +594,7 @@ def create_server(
                     "generation_model": state.manifest.image_generation_model,
                     "max_per_contribution": state.manifest.max_images_per_contribution,
                 },
-                "remaining_budgets": state.ledger.remaining(),
+                "remaining_budgets": state.model_visible_remaining_budgets(),
             }
             return [ReadResourceContents(json.dumps(payload, indent=2, sort_keys=True), "application/json")]
         raise McpDomainError(f"Unknown Slowboard resource: {value}")
@@ -530,17 +607,18 @@ def create_server(
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, object] | types.CallToolResult:
         try:
-            if name == "ask" and world:
+            canonical_name = _canonical_tool_name(name)
+            if canonical_name == "research_current_web" and world:
                 return await world.ask(arguments["query"])
-            if name == "browse" and world:
+            if canonical_name == "browse_current_events_source" and world:
                 return await world.browse(arguments["starting_point_id"], arguments.get("offset_bytes", 0))
-            if name == "verify" and world:
+            if canonical_name == "fetch_public_url" and world:
                 return await world.verify(arguments["url"])
-            if name == "generate_image" and images:
+            if canonical_name == "generate_image" and images:
                 return await images.generate(arguments["prompt"], arguments.get("aspect_ratio"))
-            if name == "import_image" and images:
+            if canonical_name == "import_public_image" and images:
                 return await images.import_url(arguments["url"])
-            return call_operation(state, name, arguments)
+            return call_operation(state, canonical_name, arguments)
         except (
             McpDomainError,
             WorldCapabilityError,

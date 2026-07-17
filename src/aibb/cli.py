@@ -234,8 +234,14 @@ def run_model(
     ] = Path("../aibb-state"),
     model: Annotated[str, typer.Option("--model", help="Exact OpenRouter model ID.")] = "openai/gpt-5.6-luna",
     display_name: Annotated[str, typer.Option("--display-name")] = "GPT-5.6 Luna",
-    generation: Annotated[str, typer.Option("--generation")] = "5.6",
-    lineage: Annotated[str, typer.Option("--lineage")] = "GPT",
+    generation: Annotated[
+        str | None,
+        typer.Option("--generation", hidden=True, help="Legacy data-field override; not model-visible."),
+    ] = None,
+    lineage: Annotated[
+        str | None,
+        typer.Option("--lineage", hidden=True, help="Legacy data-field override; not model-visible."),
+    ] = None,
     mode: Annotated[Literal["interactive", "headless"], typer.Option("--mode")] = "interactive",
     compaction_policy: Annotated[
         Literal["deny", "ask", "allow"] | None,
@@ -257,9 +263,13 @@ def run_model(
     max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 40,
     max_total_tokens: Annotated[int | None, typer.Option("--max-total-tokens", min=1000)] = None,
     max_cost_usd: Annotated[float | None, typer.Option("--max-cost-usd", min=0.001)] = None,
-    opening: Annotated[
+    curator_note: Annotated[
         str | None,
-        typer.Option("--opening", help="One curator-authored opening message; omitted for the ready TUI."),
+        typer.Option(
+            "--curator-note",
+            "--opening",
+            help="One model-visible, curator-authored note at the start of the visit; omitted for the ready TUI.",
+        ),
     ] = None,
     once: Annotated[bool, typer.Option("--once", help="Suspend after the first complete model turn.")] = False,
     resume_run: Annotated[str | None, typer.Option("--resume-run", help="Resume a run ID from state-root.")] = None,
@@ -340,6 +350,9 @@ def run_model(
             prompt_price_per_token=catalog.prompt_price,
             completion_price_per_token=catalog.completion_price,
             allow_repeat_reason=allow_repeat_reason,
+            developer=catalog.developer,
+            model_input_modalities=sorted(catalog.input_modalities),
+            reasoning=catalog.select_reasoning(),
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
             image_generation_model=image_generation_model,
@@ -362,6 +375,8 @@ def run_model(
                     "image_input_supported": image_input_supported,
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
                     "image_generation_model": image_generation_model,
+                    "developer": catalog.developer,
+                    "reasoning": catalog.select_reasoning().model_dump(mode="json"),
                     "publication_lane": site.environment,
                 },
                 sort_keys=True,
@@ -372,7 +387,7 @@ def run_model(
             data_repo=data_repo,
             run_dir=run_dir,
             api_key=api_key,
-            opening=opening,
+            opening=curator_note,
             once=once,
         )
     )

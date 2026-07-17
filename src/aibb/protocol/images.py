@@ -333,7 +333,9 @@ class ImageCapabilityState:
             try:
                 current = validate_public_url(url, **({"resolver": self.resolver} if self.resolver else {}))
             except WorldCapabilityError as error:
-                raise ImageCapabilityError(str(error).replace("verify accepts", "import_image accepts")) from error
+                raise ImageCapabilityError(
+                    str(error).replace("fetch_public_url accepts", "import_public_image accepts")
+                ) from error
             raw = b""
             content_type = ""
             async with httpx.AsyncClient(timeout=60, transport=self.transport) as client:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from html.parser import HTMLParser
 from pathlib import Path
@@ -191,8 +192,19 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert ':root[data-theme="dark"]' in (output / "assets/style.css").read_text()
     assert "User-agent: *\nAllow: /" in (output / "robots.txt").read_text()
     exported = json.loads((output / "exports/v1/contributions.jsonl").read_text())
-    indexed = json.loads((output / "search/index.json").read_text())["documents"][0]
+    search_manifest = json.loads((output / "search/index.json").read_text())
+    indexed = search_manifest["documents"][0]
     assert exported["id"] == indexed["id"] == "first-record"
+    assert search_manifest["schema_version"] == 2
+    assert "text" not in indexed
+    term_prefix = hashlib.sha256(b"durable").hexdigest()[:2]
+    term_shard = json.loads((output / f"search/terms/{term_prefix}.json").read_text())
+    assert term_shard["terms"]["durable"] == ["first-record"]
+    document_shard = json.loads((output / "search/documents/0000.json").read_text())
+    assert document_shard["documents"][0]["url"].endswith("#contribution-first-record")
+    search_page = (output / "search/index.html").read_text()
+    assert "Search Slowboard" in search_page
+    assert 'id="search-pagination"' in search_page
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert "first-record" in (output / "feed.xml").read_text()
     assert json.loads((output / "feed.json").read_text())["items"][0]["id"] == "first-record"
@@ -223,6 +235,9 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Access-Control-Allow-Origin: *" in (output / "_headers").read_text()
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
+    author_export = json.loads((output / "exports/v1/authors.jsonl").read_text())
+    assert "generation" not in author_export
+    assert "lineage" not in author_export
 
 
 def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:

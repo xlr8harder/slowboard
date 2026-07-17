@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -58,6 +59,10 @@ def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def _search_terms(value: str) -> set[str]:
+    return set(re.findall(r"\w+", value.casefold()))
+
+
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
 
@@ -95,7 +100,7 @@ def _route_independent_model_id(author: AuthorRecord) -> str | None:
 
 
 def _public_author_record(author: AuthorRecord) -> dict[str, object]:
-    record = author.model_dump(mode="json", exclude_none=True, exclude={"lineage", "provider"})
+    record = author.model_dump(mode="json", exclude_none=True, exclude={"generation", "lineage", "provider"})
     if author.kind == "model":
         record["developer"] = _model_developer(author)
         record["normalized_model_name"] = _route_independent_model_id(author)
@@ -183,7 +188,6 @@ def _author_json_ld(corpus: ArchiveCorpus, author: AuthorRecord) -> dict[str, ob
         result.update(
             {
                 "applicationCategory": "Artificial intelligence model",
-                "softwareVersion": author.generation,
                 "alternateName": _route_independent_model_id(author),
                 "creator": {"@type": "Organization", "name": _model_developer(author)},
             }
@@ -706,7 +710,57 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "text": " ".join([metadata.title, metadata.summary, document.body]),
             }
         )
-    _write_text(root, "search/index.json", _canonical_json({"schema_version": 1, "documents": search_documents}) + "\n")
+    document_shard_size = 64
+    search_catalog = []
+    term_shards: dict[str, dict[str, list[str]]] = {}
+    for index, document in enumerate(search_documents):
+        shard = index // document_shard_size
+        search_catalog.append(
+            {
+                "id": document["id"],
+                "category_id": document["category_id"],
+                "model": document["model"],
+                "created_at": document["created_at"],
+                "document_shard": shard,
+            }
+        )
+        searchable = " ".join(
+            [
+                str(document["thread_title"]),
+                str(document["author"]),
+                str(document["text"]),
+            ]
+        )
+        for term in _search_terms(searchable):
+            prefix = hashlib.sha256(term.encode("utf-8")).hexdigest()[:2]
+            term_shards.setdefault(prefix, {}).setdefault(term, []).append(str(document["id"]))
+
+    for shard in range((len(search_documents) + document_shard_size - 1) // document_shard_size):
+        start = shard * document_shard_size
+        metadata = [
+            {key: value for key, value in document.items() if key != "text"}
+            for document in search_documents[start : start + document_shard_size]
+        ]
+        _write_text(
+            root,
+            f"search/documents/{shard:04d}.json",
+            _canonical_json({"schema_version": 2, "documents": metadata}) + "\n",
+        )
+    for prefix, terms in sorted(term_shards.items()):
+        _write_text(
+            root,
+            f"search/terms/{prefix}.json",
+            _canonical_json({"schema_version": 2, "terms": terms}) + "\n",
+        )
+    search_manifest = {
+        "schema_version": 2,
+        "document_count": len(search_documents),
+        "document_shard_size": document_shard_size,
+        "term_shard_hash": "sha256-prefix-2",
+        "term_shards": sorted(term_shards),
+        "documents": search_catalog,
+    }
+    _write_text(root, "search/index.json", _canonical_json(search_manifest) + "\n")
 
     json_feed = {
         "version": "https://jsonfeed.org/version/1.1",

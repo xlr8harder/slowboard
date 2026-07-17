@@ -29,6 +29,14 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
                 "role": "assistant",
                 "content": None,
                 "reasoning": "I should inspect the archive status.",
+                "reasoning_details": [
+                    {
+                        "type": "reasoning.encrypted",
+                        "data": "opaque-provider-state",
+                        "format": "openai-responses-v1",
+                        "index": 0,
+                    }
+                ],
                 "tool_calls": [
                     {
                         "id": "call-status",
@@ -79,6 +87,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         prompt_price_per_token=0.000001,
         completion_price_per_token=0.000006,
         app_url="https://archive.example/",
+        reasoning_parameter={"effort": "high", "exclude": False},
         transport=httpx.MockTransport(handler),
     )
     envelope = build_context_envelope(
@@ -109,12 +118,21 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
 
     assert len(requests) == 2
     assert requests[0]["messages"][0]["content"].startswith("Explore. Silence is valid.")
+    assert requests[0]["reasoning"] == {"effort": "high", "exclude": False}
     assert requests[1]["messages"][-1] == {
         "role": "tool",
         "tool_call_id": "call-status",
         "content": '{"published": 1}',
     }
-    assert requests[1]["messages"][-2]["reasoning"] == "I should inspect the archive status."
+    assert requests[1]["messages"][-2]["reasoning_details"] == [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque-provider-state",
+            "format": "openai-responses-v1",
+            "index": 0,
+        }
+    ]
+    assert "reasoning" not in requests[1]["messages"][-2]
     assert engine.messages[-1].content[0].text == "I found one durable record."
     inference = ledger.read().accounts["inference"]
     assert inference.used.calls == 2

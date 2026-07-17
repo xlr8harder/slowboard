@@ -229,7 +229,7 @@ def test_image_tools_are_budget_gated_and_not_exposed_read_only() -> None:
     writable = {tool.name: tool for tool in _tools(False, enabled)}
     read_only = {tool.name for tool in _tools(True, enabled)}
 
-    assert {"generate_image", "import_image"} <= writable.keys()
-    assert writable["create_contribution_draft"].inputSchema["properties"]["attachments"]["maxItems"] == 12
+    assert {"generate_image", "import_public_image"} <= writable.keys()
+    assert writable["start_reply_draft"].inputSchema["properties"]["attachments"]["maxItems"] == 12
     assert "generate_image" not in read_only
-    assert "import_image" not in read_only
+    assert "import_public_image" not in read_only

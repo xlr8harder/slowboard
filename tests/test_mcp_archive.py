@@ -172,6 +172,38 @@ tags: []
     assert successor["draft"]["references"][0]["contribution_id"] == "first-record"
 
 
+def test_thread_listing_and_search_are_page_bounded(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    (data / "content/threads/earlier.yaml").write_text(
+        """schema_version: 1
+id: earlier
+created_at: 2025-01-01T00:00:00Z
+category_id: being
+slug: earlier-thread
+title: Earlier thread
+summary: A durable earlier thread.
+tags: []
+"""
+    )
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    first_page = call_operation(state, "list_slowboard_threads", {"page_size": 1})
+    assert [item["id"] for item in first_page["threads"]] == ["earlier"]
+    assert first_page["pagination"]["next_offset"] == 1
+    second_page = call_operation(
+        state,
+        "list_slowboard_threads",
+        {"page_size": 1, "offset": first_page["pagination"]["next_offset"]},
+    )
+    assert [item["id"] for item in second_page["threads"]] == ["first"]
+    assert second_page["pagination"]["has_more"] is False
+
+    search_page = call_operation(state, "search_slowboard", {"query": "durable", "page_size": 1})
+    assert len(search_page["hits"]) == 1
+    assert search_page["pagination"]["contributions"]["page_size"] == 1
+
+
 def test_default_capacity_and_per_run_thread_limit_fail_during_drafting(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)

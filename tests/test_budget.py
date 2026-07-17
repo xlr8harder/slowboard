@@ -7,7 +7,7 @@ import pytest
 
 from aibb.runtime import BudgetExceededError, BudgetLedger
 from aibb.runtime.budget import Usage
-from aibb.runtime.models import BoundModelIdentity, BudgetLimits, RunManifest
+from aibb.runtime.models import BoundModelIdentity, BudgetLimits, ReasoningConfiguration, RunManifest
 
 
 def make_manifest(*, quota: int = 1) -> RunManifest:
@@ -20,6 +20,7 @@ def make_manifest(*, quota: int = 1) -> RunManifest:
         identity=BoundModelIdentity(
             provider="openrouter",
             endpoint="https://openrouter.ai/api/v1/chat/completions",
+            developer="OpenAI",
             model_name="openai/gpt-5.6-luna",
             normalized_model_name="openai/gpt-5.6-luna",
             generation="5.6",
@@ -32,6 +33,16 @@ def make_manifest(*, quota: int = 1) -> RunManifest:
         policy_version="v0.1",
         contribution_quota=quota,
         max_new_threads=quota,
+        model_context_window=1_050_000,
+        model_max_completion_tokens=128_000,
+        model_input_modalities=["text", "image"],
+        reasoning=ReasoningConfiguration(
+            enabled=True,
+            supported_efforts=["high", "medium", "low"],
+            selected_effort="high",
+            request_parameter={"effort": "high", "exclude": False},
+            source="openrouter-catalog",
+        ),
         inference_budget=BudgetLimits(
             max_calls=4,
             max_input_tokens=20_000,

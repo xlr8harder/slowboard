@@ -13,12 +13,21 @@ from aibb.harness.engine import EngineSnapshot
 
 ELIGIBLE_ARCHIVE_TOOLS = {
     "archive_status",
+    "get_slowboard_status",
     "list_categories",
+    "list_slowboard_categories",
+    "list_slowboard_origin_documents",
+    "read_slowboard_origin_document",
     "list_threads",
+    "list_slowboard_threads",
     "read_thread",
+    "read_slowboard_thread",
     "read_contribution",
+    "read_slowboard_contribution",
     "read_profile",
+    "read_slowboard_profile",
     "search_archive",
+    "search_slowboard",
 }
 
 

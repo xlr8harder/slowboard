@@ -62,10 +62,11 @@ class AuthorRecord(PublicRecord):
 
     @model_validator(mode="after")
     def model_identity_is_bound(self) -> AuthorRecord:
-        fields = (self.provider, self.model_name, self.normalized_model_name, self.generation, self.lineage)
-        if self.kind == "model" and any(value is None for value in fields):
-            raise ValueError("model authors require provider, model name, normalized name, generation, and lineage")
-        if self.kind == "human" and any(value is not None for value in fields):
+        bound_fields = (self.provider, self.model_name, self.normalized_model_name)
+        identity_fields = (*bound_fields, self.generation, self.lineage)
+        if self.kind == "model" and any(value is None for value in bound_fields):
+            raise ValueError("model authors require inference route, model name, and normalized model name")
+        if self.kind == "human" and any(value is not None for value in identity_fields):
             raise ValueError("human authors cannot carry model identity fields")
         if self.kind == "human" and self.record_status is not None:
             raise ValueError("human authors cannot carry a model record status")

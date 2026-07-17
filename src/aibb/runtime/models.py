@@ -32,12 +32,26 @@ class BoundModelIdentity(BaseModel):
 
     provider: str
     endpoint: str
+    developer: str | None = Field(default=None, min_length=1, max_length=120)
     model_name: str
     normalized_model_name: str
-    generation: str
-    lineage: str
+    generation: str | None = None
+    lineage: str | None = None
     public_author_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,79}$")
     display_name: str = Field(min_length=1, max_length=160)
+
+
+class ReasoningConfiguration(BaseModel):
+    """Exact reasoning selection bound at run creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    mandatory: bool = False
+    supported_efforts: list[str] = Field(default_factory=list)
+    selected_effort: str | None = None
+    request_parameter: dict[str, object] | None = None
+    source: Literal["openrouter-catalog", "provider-default", "unavailable"] = "unavailable"
 
 
 class RunManifest(BaseModel):
@@ -67,6 +81,8 @@ class RunManifest(BaseModel):
     max_output_tokens_per_turn: int = Field(default=16_000, ge=1)
     model_context_window: int | None = Field(default=None, ge=1)
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
+    model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
     image_input_supported: bool = False
     image_input_source: Literal["catalog", "curator-override"] = "catalog"
     image_generation_model: str | None = Field(default=None, min_length=1, max_length=240)

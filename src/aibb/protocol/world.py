@@ -148,7 +148,7 @@ def validate_public_url(
 ) -> str:
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        raise WorldCapabilityError("verify accepts public HTTP(S) URLs without embedded credentials")
+        raise WorldCapabilityError("fetch_public_url accepts public HTTP(S) URLs without embedded credentials")
     hostname = parsed.hostname.rstrip(".").casefold()
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise WorldCapabilityError("local and private network URLs are not available")
@@ -236,11 +236,13 @@ class WorldCapabilityState:
 
     async def ask(self, query: str) -> dict[str, object]:
         if "ask" not in self.enabled:
-            raise WorldCapabilityError("ask is not enabled for this run")
+            raise WorldCapabilityError("research_current_web is not enabled for this run")
         if not query.strip():
-            raise WorldCapabilityError("ask requires a non-empty research question")
+            raise WorldCapabilityError("research_current_web requires a non-empty research question")
         if not self.openrouter_api_key:
-            raise WorldCapabilityError("ask is unavailable because its operator credential is not configured")
+            raise WorldCapabilityError(
+                "research_current_web is unavailable because its operator credential is not configured"
+            )
         payload = {
             "model": ASK_MODEL,
             "messages": [
@@ -343,7 +345,7 @@ class WorldCapabilityState:
 
     async def browse(self, starting_point_id: str, offset_bytes: int = 0) -> dict[str, object]:
         if "browse" not in self.enabled:
-            raise WorldCapabilityError("browse is not enabled for this run")
+            raise WorldCapabilityError("browse_current_events_source is not enabled for this run")
         try:
             point = next(item for item in self.starting_points.starting_points if item.id == starting_point_id)
         except StopIteration as error:
@@ -358,7 +360,7 @@ class WorldCapabilityState:
 
     async def verify(self, url: str) -> dict[str, object]:
         if "verify" not in self.enabled:
-            raise WorldCapabilityError("verify is not enabled for this run")
+            raise WorldCapabilityError("fetch_public_url is not enabled for this run")
         return await self._fetch("verify", url)
 
     async def _fetch(self, capability: str, url: str, *, content_offset: int = 0) -> dict[str, object]:
@@ -384,7 +386,9 @@ class WorldCapabilityState:
                         content_type = response.headers.get("content-type", "").split(";", 1)[0].casefold()
                         if not any(content_type.startswith(value) for value in ALLOWED_FETCH_TYPES):
                             received_type = content_type or "unknown"
-                            raise WorldCapabilityError(f"verify only returns textual content, not {received_type}")
+                            raise WorldCapabilityError(
+                                f"fetch_public_url only returns textual content, not {received_type}"
+                            )
                         chunks: list[bytes] = []
                         size = 0
                         content_ceiling = max(1, requested.result_bytes - 4_096)

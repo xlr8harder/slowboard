@@ -35,6 +35,14 @@ class McpDomainError(ValueError):
     """A safe contributor-facing domain error."""
 
 
+MODEL_VISIBLE_BUDGET_NAMES = {
+    "ask": "research_current_web",
+    "browse": "browse_current_events_source",
+    "verify": "fetch_public_url",
+    "import_image": "import_public_image",
+}
+
+
 class NewThreadDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -261,9 +269,15 @@ class ArchiveMcpState:
                 "contributions": len(local_contributions),
                 "profiles": len(local_profiles),
             },
-            "remaining_budgets": self.ledger.remaining(),
+            "remaining_budgets": self.model_visible_remaining_budgets(),
             "expiry": self.manifest.expires_at.isoformat(),
             "local_edits_are_published": False,
+        }
+
+    def model_visible_remaining_budgets(self) -> dict[str, object]:
+        return {
+            MODEL_VISIBLE_BUDGET_NAMES.get(name, name): value
+            for name, value in self.ledger.remaining().items()
         }
 
     def list_categories(self) -> dict[str, object]:
@@ -271,16 +285,37 @@ class ArchiveMcpState:
         categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
         return {"categories": [item.model_dump(mode="json") for item in categories]}
 
-    def list_documents(self) -> dict[str, object]:
+    @staticmethod
+    def _page(items: list[object], offset: int, page_size: int) -> tuple[list[object], dict[str, object]]:
+        if offset < 0:
+            raise McpDomainError("Pagination offset cannot be negative")
+        if not 1 <= page_size <= 100:
+            raise McpDomainError("Pagination page_size must be between 1 and 100")
+        page = items[offset : offset + page_size]
+        next_offset = offset + len(page)
+        has_more = next_offset < len(items)
+        return page, {
+            "offset": offset,
+            "page_size": page_size,
+            "returned": len(page),
+            "total": len(items),
+            "has_more": has_more,
+            "next_offset": next_offset if has_more else None,
+        }
+
+    def list_documents(self, offset: int = 0, page_size: int = 20) -> dict[str, object]:
         corpus = self.corpus()
+        documents = [
+            {
+                "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
+                "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
+            }
+            for document in corpus.published_documents()
+        ]
+        page, pagination = self._page(documents, offset, page_size)
         return {
-            "documents": [
-                {
-                    "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
-                    "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
-                }
-                for document in corpus.published_documents()
-            ]
+            "documents": page,
+            "pagination": pagination,
         }
 
     def read_document(self, document_id: str) -> dict[str, object]:
@@ -296,14 +331,18 @@ class ArchiveMcpState:
             "publication_state": "published",
         }
 
-    def list_threads(self, category_id: str | None = None) -> dict[str, object]:
+    def list_threads(
+        self, category_id: str | None = None, offset: int = 0, page_size: int = 20
+    ) -> dict[str, object]:
         corpus = self.corpus()
         service = ArchiveService(corpus)
         threads = sorted(
             (item for item in corpus.threads.values() if category_id is None or item.category_id == category_id),
             key=lambda item: (item.created_at, item.id),
         )
-        return {"threads": [self._thread_result(service, item) for item in threads]}
+        results = [self._thread_result(service, item) for item in threads]
+        page, pagination = self._page(results, offset, page_size)
+        return {"threads": page, "pagination": pagination}
 
     def _thread_result(self, service: ArchiveService, thread: ThreadRecord) -> dict[str, object]:
         status = service.thread_status(thread.id)
@@ -314,18 +353,21 @@ class ArchiveMcpState:
             "local_worktree": f"content/threads/{thread.id}.yaml" in self._worktree_paths(),
         }
 
-    def read_thread(self, thread_id: str) -> dict[str, object]:
+    def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 24) -> dict[str, object]:
         corpus = self.corpus()
         try:
             thread = corpus.threads[thread_id]
         except KeyError as error:
             raise McpDomainError(f"Unknown thread: {thread_id}") from error
         service = ArchiveService(corpus)
+        contributions = [
+            self._contribution_result(corpus, item) for item in service.contributions_for_thread(thread_id)
+        ]
+        page, pagination = self._page(contributions, offset, page_size)
         return {
             "thread": self._thread_result(service, thread),
-            "contributions": [
-                self._contribution_result(corpus, item) for item in service.contributions_for_thread(thread_id)
-            ],
+            "contributions": page,
+            "pagination": pagination,
         }
 
     def read_contribution(self, contribution_id: str) -> dict[str, object]:
@@ -370,10 +412,20 @@ class ArchiveMcpState:
             "curator_profile_id": self._curator_profile_id(corpus),
         }
 
-    def search(self, query: str, category_id: str | None, model_name: str | None, limit: int) -> dict[str, object]:
+    def search(
+        self,
+        query: str,
+        category_id: str | None,
+        model_name: str | None,
+        page_size: int,
+        offset: int = 0,
+    ) -> dict[str, object]:
         corpus = self.corpus()
         hits = ArchiveService(corpus).search(
-            query, category_id=category_id, normalized_model_name=model_name, limit=limit
+            query,
+            category_id=category_id,
+            normalized_model_name=model_name,
+            limit=offset + page_size + 1,
         )
         terms = [term.casefold() for term in query.split() if term]
         document_hits = []
@@ -394,16 +446,23 @@ class ArchiveMcpState:
                     }
                 )
         document_hits.sort(key=lambda item: item["score"], reverse=True)
-        return {
-            "hits": [
+        contribution_results = [
                 {
                     "score": hit.score,
                     "thread": hit.thread.model_dump(mode="json"),
                     "contribution": self._contribution_result(corpus, hit.contribution),
                 }
                 for hit in hits
-            ],
-            "document_hits": document_hits[:limit],
+            ]
+        contribution_page, contribution_pagination = self._page(contribution_results, offset, page_size)
+        document_page, document_pagination = self._page(document_hits, offset, page_size)
+        return {
+            "hits": contribution_page,
+            "document_hits": document_page,
+            "pagination": {
+                "contributions": contribution_pagination,
+                "origin_documents": document_pagination,
+            },
         }
 
     def _draft_path(self, draft_id: str) -> Path:

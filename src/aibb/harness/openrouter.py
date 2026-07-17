@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from typing import Any
@@ -35,6 +36,20 @@ from aibb.runtime.budget import Usage as LedgerUsage
 from aibb.sessions.store import SessionStore
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+REASONING_DETAILS_SIGNATURE_PREFIX = "openrouter-reasoning-details:"
+
+
+def _encode_reasoning_details(value: list[dict[str, Any]]) -> str:
+    raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return REASONING_DETAILS_SIGNATURE_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_reasoning_details(value: str | None) -> list[dict[str, Any]] | None:
+    if not value or not value.startswith(REASONING_DETAILS_SIGNATURE_PREFIX):
+        return None
+    encoded = value.removeprefix(REASONING_DETAILS_SIGNATURE_PREFIX)
+    decoded = json.loads(base64.urlsafe_b64decode(encoded.encode("ascii")))
+    return decoded if isinstance(decoded, list) else None
 
 
 def openrouter_model(
@@ -45,6 +60,7 @@ def openrouter_model(
     prompt_price_per_token: float,
     completion_price_per_token: float,
     image_input_supported: bool = False,
+    reasoning_enabled: bool = False,
 ) -> Model:
     return Model(
         id=model_id,
@@ -52,7 +68,7 @@ def openrouter_model(
         api="aibb-openrouter-chat-completions",
         provider="openrouter",
         baseUrl=OPENROUTER_ENDPOINT,
-        reasoning=True,
+        reasoning=reasoning_enabled,
         input=["text", "image"] if image_input_supported else ["text"],
         cost=ModelCost(
             input=prompt_price_per_token * 1_000_000,
@@ -96,11 +112,15 @@ def _messages(context: Context, *, image_input_supported: bool = False) -> list[
             tool_calls = []
             text = []
             reasoning = []
+            reasoning_details: list[dict[str, Any]] = []
             for block in message.content:
                 if block.type == "text":
                     text.append(block.text)
                 elif block.type == "thinking":
                     reasoning.append(block.thinking)
+                    details = _decode_reasoning_details(block.thinkingSignature)
+                    if details:
+                        reasoning_details.extend(details)
                 elif block.type == "toolCall":
                     tool_calls.append(
                         {
@@ -115,7 +135,9 @@ def _messages(context: Context, *, image_input_supported: bool = False) -> list[
             payload: dict[str, Any] = {"role": "assistant", "content": "\n".join(text) or None}
             if tool_calls:
                 payload["tool_calls"] = tool_calls
-            if reasoning:
+            if reasoning_details:
+                payload["reasoning_details"] = reasoning_details
+            elif reasoning:
                 payload["reasoning"] = "\n".join(reasoning)
             messages.append(payload)
         elif message.role == "toolResult":
@@ -175,6 +197,7 @@ class OpenRouterAdapter:
         prompt_price_per_token: float,
         completion_price_per_token: float,
         app_url: str,
+        reasoning_parameter: dict[str, object] | None = None,
         timeout_seconds: float = 180,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -185,6 +208,7 @@ class OpenRouterAdapter:
         self.prompt_price_per_token = prompt_price_per_token
         self.completion_price_per_token = completion_price_per_token
         self.app_url = app_url
+        self.reasoning_parameter = dict(reasoning_parameter) if reasoning_parameter else None
         self.timeout_seconds = timeout_seconds
         self.transport = transport
         self.last_payload: dict[str, Any] | None = None
@@ -231,6 +255,8 @@ class OpenRouterAdapter:
         if not payload["tools"]:
             payload.pop("tools")
             payload.pop("tool_choice")
+        if self.reasoning_parameter:
+            payload["reasoning"] = self.reasoning_parameter
         estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
         available_output = model.contextWindow - estimated_input
         if available_output < 1:
@@ -343,12 +369,32 @@ class OpenRouterAdapter:
             )
             stream.push(StartEvent(partial=output))
             reasoning = message.get("reasoning")
-            if isinstance(reasoning, str) and reasoning:
-                block = ThinkingContent(thinking=reasoning, thinkingSignature="openrouter-reasoning")
+            reasoning_details = message.get("reasoning_details")
+            valid_reasoning_details = (
+                [item for item in reasoning_details if isinstance(item, dict)]
+                if isinstance(reasoning_details, list)
+                else []
+            )
+            detail_text = "\n".join(
+                str(item.get("summary") or item.get("text") or "")
+                for item in valid_reasoning_details
+                if item.get("summary") or item.get("text")
+            )
+            thinking_text = reasoning if isinstance(reasoning, str) else detail_text
+            if thinking_text or valid_reasoning_details:
+                block = ThinkingContent(
+                    thinking=thinking_text or "[Provider reasoning state retained without visible text]",
+                    thinkingSignature=(
+                        _encode_reasoning_details(valid_reasoning_details)
+                        if valid_reasoning_details
+                        else "openrouter-reasoning"
+                    ),
+                    redacted=not bool(thinking_text),
+                )
                 output.content.append(block)
                 index = len(output.content) - 1
                 stream.push(ThinkingStartEvent(contentIndex=index, partial=output))
-                stream.push(ThinkingEndEvent(contentIndex=index, content=reasoning, partial=output))
+                stream.push(ThinkingEndEvent(contentIndex=index, content=block.thinking, partial=output))
             content = message.get("content")
             if isinstance(content, str) and content:
                 block = TextContent(text=content)

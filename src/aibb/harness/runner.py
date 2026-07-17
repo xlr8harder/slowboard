@@ -83,8 +83,8 @@ def create_run_manifest(
     state_root: Path,
     model_id: str,
     display_name: str,
-    generation: str,
-    lineage: str,
+    generation: str | None,
+    lineage: str | None,
     mode: Literal["interactive", "headless"],
     compaction_policy: Literal["deny", "ask", "allow"],
     contribution_quota: int,
@@ -98,6 +98,9 @@ def create_run_manifest(
     prompt_price_per_token: float,
     completion_price_per_token: float,
     allow_repeat_reason: str | None,
+    developer: str | None = None,
+    model_input_modalities: list[str] | None = None,
+    reasoning: Any = None,
     image_input_supported: bool = False,
     image_input_source: Literal["catalog", "curator-override"] = "catalog",
     image_generation_model: str | None = "google/gemini-3-pro-image",
@@ -131,6 +134,7 @@ def create_run_manifest(
         identity=BoundModelIdentity(
             provider="openrouter",
             endpoint="https://openrouter.ai/api/v1/chat/completions",
+            developer=developer,
             model_name=model_id,
             normalized_model_name=normalized_name,
             generation=generation,
@@ -138,8 +142,8 @@ def create_run_manifest(
             public_author_id=author_id,
             display_name=display_name,
         ),
-        orientation_version="v0.2",
-        notice_version="v0.2",
+        orientation_version="v0.3",
+        notice_version="v0.3",
         policy_version="v0.2",
         calendar_date=local_now.date(),
         calendar_utc_offset=calendar_utc_offset,
@@ -149,6 +153,8 @@ def create_run_manifest(
         max_output_tokens_per_turn=max_output_tokens,
         model_context_window=model_context_window,
         model_max_completion_tokens=model_max_completion_tokens,
+        model_input_modalities=model_input_modalities or ["text"],
+        reasoning=reasoning or {},
         image_input_supported=image_input_supported,
         image_input_source=image_input_source,
         image_generation_model=image_generation_model,
@@ -250,7 +256,12 @@ def _turn_boundary_outcome(
 def _context_fraction(manifest: RunManifest, engine: AibbHarnessEngine) -> float | None:
     if not manifest.model_context_window:
         return None
-    used = estimate_message_tokens(engine.snapshot().messages)
+    snapshot = engine.snapshot()
+    tool_context = {
+        "role": "slowboard_tool_schema_estimate",
+        "tools": _tool_definitions(list(engine.agent.state.tools)),
+    }
+    used = estimate_message_tokens([*snapshot.messages, tool_context])
     reserved = min(manifest.max_output_tokens_per_turn, manifest.model_context_window)
     return min(1.0, (used + reserved) / manifest.model_context_window)
 
@@ -309,6 +320,7 @@ async def run_openrouter_visit(
         prompt_price_per_token=catalog.prompt_price,
         completion_price_per_token=catalog.completion_price,
         image_input_supported=manifest.image_input_supported,
+        reasoning_enabled=manifest.reasoning.enabled,
     )
     adapter = OpenRouterAdapter(
         api_key=api_key,
@@ -318,7 +330,71 @@ async def run_openrouter_visit(
         prompt_price_per_token=catalog.prompt_price,
         completion_price_per_token=catalog.completion_price,
         app_url=load_archive(data_repo).site.base_url,
+        reasoning_parameter=manifest.reasoning.request_parameter,
     )
+    warned_context_generations: set[int] = set()
+
+    def apply_compaction(
+        active_engine: AibbHarnessEngine,
+        *,
+        authorization: Literal["curator", "manifest-allow"],
+    ) -> Any | None:
+        snapshot = active_engine.snapshot()
+        source_sequence = len(store.read_events())
+        result = compact_archive_results(
+            snapshot,
+            run_id=manifest.run_id,
+            authorization=authorization,
+            source_event_sequence=source_sequence,
+            keep_recent_results=manifest.compaction_keep_recent_results,
+        )
+        if result is None:
+            return None
+        compacted, artifact = result
+        artifact_path = run_dir / "session/compactions" / f"generation-{compacted.context_generation}.json"
+        _atomic_write_json(artifact_path, artifact.model_dump(mode="json"))
+        update = active_engine.replace_model_visible_context(compacted)
+        store.append(
+            "compaction_applied",
+            {
+                "artifact": str(artifact_path.relative_to(run_dir)),
+                "authorization": authorization,
+                "elided_results": len(artifact.elisions),
+                "estimated_tokens_before": artifact.estimated_tokens_before,
+                "estimated_tokens_after": artifact.estimated_tokens_after,
+                "result_messages_sha256": artifact.result_messages_sha256,
+                "safe_boundary": "after_complete_tool_results_before_provider_request",
+            },
+            "operator",
+        )
+        store.write_checkpoint(active_engine.snapshot())
+        console.print(
+            "Compacted "
+            f"{len(artifact.elisions)} archive results "
+            f"(~{artifact.estimated_tokens_before:,} to ~{artifact.estimated_tokens_after:,} context tokens)."
+        )
+        return update
+
+    def prepare_next_turn(active_engine: AibbHarnessEngine) -> Any | None:
+        fraction = _context_fraction(manifest, active_engine)
+        if fraction is None or fraction < manifest.compaction_soft_threshold:
+            return None
+        if manifest.compaction_policy == "allow":
+            return apply_compaction(active_engine, authorization="manifest-allow")
+        if active_engine.context_generation not in warned_context_generations:
+            warned_context_generations.add(active_engine.context_generation)
+            percentage = fraction * 100
+            if manifest.compaction_policy == "ask":
+                console.print(
+                    f"Context is approximately {percentage:.0f}% full at a safe tool boundary. "
+                    "Automatic compaction is not authorized; abort or let this model turn finish, then use :compact."
+                )
+            elif fraction >= manifest.compaction_hard_threshold:
+                console.print(
+                    f"Context is approximately {percentage:.0f}% full and compaction is denied by this run manifest."
+                )
+        return None
+
     mcp_environment = _clean_mcp_environment()
     if {"ask", "generate_image"} & manifest.capability_budgets.keys():
         mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
@@ -343,7 +419,12 @@ async def run_openrouter_visit(
             checkpoint = store.read_checkpoint()
             if checkpoint.engine.model["id"] != manifest.identity.model_name:
                 raise ValueError("Saved checkpoint model does not match the run manifest")
-            engine = AibbHarnessEngine.from_snapshot(checkpoint.engine, tools=tools, stream_fn=adapter)
+            engine = AibbHarnessEngine.from_snapshot(
+                checkpoint.engine,
+                tools=tools,
+                stream_fn=adapter,
+                prepare_next_turn=prepare_next_turn,
+            )
             store.append("run_resumed", {"model": manifest.identity.model_name}, "operator")
             store.write_checkpoint(engine.snapshot())
             context_digest = store.read_events()[0].payload.get("context_digest", "restored")
@@ -378,7 +459,12 @@ async def run_openrouter_visit(
                 messages=[envelope.initial_message()],
                 tools=tools,
                 stream_fn=adapter,
-                provider_state={"endpoint": manifest.identity.endpoint, "model": manifest.identity.model_name},
+                provider_state={
+                    "endpoint": manifest.identity.endpoint,
+                    "model": manifest.identity.model_name,
+                    "reasoning": manifest.reasoning.model_dump(mode="json"),
+                },
+                prepare_next_turn=prepare_next_turn,
             )
             context_digest = envelope.digest
 
@@ -432,44 +518,9 @@ async def run_openrouter_visit(
                 console.print(response_text)
 
         def compact(*, authorization: Literal["curator", "manifest-allow"]) -> bool:
-            nonlocal engine
-            snapshot = engine.snapshot()
-            source_sequence = len(store.read_events())
-            result = compact_archive_results(
-                snapshot,
-                run_id=manifest.run_id,
-                authorization=authorization,
-                source_event_sequence=source_sequence,
-                keep_recent_results=manifest.compaction_keep_recent_results,
-            )
-            if result is None:
+            if apply_compaction(engine, authorization=authorization) is None:
                 console.print("No older archive results are currently eligible for compaction.")
                 return False
-            compacted, artifact = result
-            artifact_path = (
-                run_dir / "session/compactions" / f"generation-{compacted.context_generation}.json"
-            )
-            _atomic_write_json(artifact_path, artifact.model_dump(mode="json"))
-            store.append(
-                "compaction_applied",
-                {
-                    "artifact": str(artifact_path.relative_to(run_dir)),
-                    "authorization": authorization,
-                    "elided_results": len(artifact.elisions),
-                    "estimated_tokens_before": artifact.estimated_tokens_before,
-                    "estimated_tokens_after": artifact.estimated_tokens_after,
-                    "result_messages_sha256": artifact.result_messages_sha256,
-                },
-                "operator",
-            )
-            engine = AibbHarnessEngine.from_snapshot(compacted, tools=tools, stream_fn=adapter)
-            engine.agent.subscribe(lambda event, _signal: _record_agent_event(store, event))
-            store.write_checkpoint(engine.snapshot())
-            console.print(
-                "Compacted "
-                f"{len(artifact.elisions)} archive results "
-                f"(~{artifact.estimated_tokens_before:,} to ~{artifact.estimated_tokens_after:,} context tokens)."
-            )
             return True
 
         def maybe_compact() -> None:

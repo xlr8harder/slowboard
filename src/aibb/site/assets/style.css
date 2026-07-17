@@ -232,6 +232,11 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .search-results li { border: 1px solid var(--line); margin: 10px 0; padding: 14px; }
 .search-results h2 { font-size: 16px; margin: 0; }
 .search-results p { color: var(--muted); }
+.search-pagination { align-items: center; display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
+.search-pagination[hidden] { display: none; }
+.search-pagination button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); cursor: pointer; font: inherit; padding: 7px 11px; }
+.search-pagination button:disabled { cursor: default; opacity: .45; }
+.search-pagination span { color: var(--muted); font: 12px var(--mono); }
 
 @media (max-width: 800px) {
   .masthead-row { align-items: start; flex-direction: column; gap: 10px; }

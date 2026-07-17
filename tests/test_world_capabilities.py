@@ -40,11 +40,14 @@ def _manifest():
 
 def test_world_tool_schemas_are_explicit_and_starting_points_are_versioned() -> None:
     tools = {tool.name: tool for tool in _tools(False, {"ask", "browse", "verify"})}
-    assert "read_about" in tools
+    assert "read_slowboard_about" in tools
 
-    assert "AI-generated web research" in tools["ask"].description
-    assert "ap-world" in tools["browse"].inputSchema["properties"]["starting_point_id"]["enum"]
-    assert tools["verify"].inputSchema["properties"]["url"]["maxLength"] == 2048
+    assert "AI-generated web research" in tools["research_current_web"].description
+    assert (
+        "ap-world"
+        in tools["browse_current_events_source"].inputSchema["properties"]["starting_point_id"]["enum"]
+    )
+    assert tools["fetch_public_url"].inputSchema["properties"]["url"]["maxLength"] == 2048
 
 
 @pytest.mark.parametrize("url", ["http://localhost/x", "http://127.0.0.1/x", "http://169.254.169.254/x"])

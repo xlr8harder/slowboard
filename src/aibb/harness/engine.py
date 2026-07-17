@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Callable
 from typing import Any
 
 from harn_agent.agent import Agent
-from harn_agent.types import AgentMessage, AgentTool
+from harn_agent.types import AgentContext, AgentLoopTurnUpdate, AgentMessage, AgentTool
 from harn_ai.types import Model, TextContent, UserMessage, validate_message
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,9 +54,17 @@ class AibbHarnessEngine:
         thinking_level: str = "off",
         provider_state: dict[str, Any] | None = None,
         context_generation: int = 0,
+        prepare_next_turn: Callable[[AibbHarnessEngine], AgentLoopTurnUpdate | None | Any] | None = None,
     ) -> None:
         self.provider_state = dict(provider_state or {})
         self.context_generation = context_generation
+
+        async def prepare(_signal: Any) -> AgentLoopTurnUpdate | None:
+            if prepare_next_turn is None:
+                return None
+            value = prepare_next_turn(self)
+            return await value if inspect.isawaitable(value) else value
+
         self._agent = Agent(
             {
                 "initialState": {
@@ -70,6 +79,7 @@ class AibbHarnessEngine:
                 "steeringMode": "one-at-a-time",
                 "followUpMode": "one-at-a-time",
                 "maxRetries": 0,
+                "prepareNextTurn": prepare if prepare_next_turn is not None else None,
             }
         )
 
@@ -80,6 +90,7 @@ class AibbHarnessEngine:
         *,
         tools: list[AgentTool],
         stream_fn: Callable[..., Any],
+        prepare_next_turn: Callable[[AibbHarnessEngine], AgentLoopTurnUpdate | None | Any] | None = None,
     ) -> AibbHarnessEngine:
         return cls(
             model=Model.model_validate(snapshot.model),
@@ -90,6 +101,7 @@ class AibbHarnessEngine:
             thinking_level=snapshot.thinking_level,
             provider_state=snapshot.provider_state,
             context_generation=snapshot.context_generation,
+            prepare_next_turn=prepare_next_turn,
         )
 
     @property
@@ -115,6 +127,24 @@ class AibbHarnessEngine:
 
     def follow_up(self, text: str) -> None:
         self._agent.followUp(_curator_message(text))
+
+    def replace_model_visible_context(self, snapshot: EngineSnapshot) -> AgentLoopTurnUpdate:
+        """Install a recorded context transition at a safe Harn turn boundary."""
+
+        if snapshot.model.get("id") != self._agent.state.model.id:
+            raise ValueError("A context transition cannot change the bound model")
+        if snapshot.system_prompt != self._agent.state.systemPrompt:
+            raise ValueError("A context transition cannot change the system prompt")
+        messages = [validate_message(message) for message in snapshot.messages]
+        self._agent.state.messages = messages
+        self.context_generation = snapshot.context_generation
+        return AgentLoopTurnUpdate(
+            context=AgentContext(
+                systemPrompt=self._agent.state.systemPrompt,
+                messages=list(messages),
+                tools=list(self._agent.state.tools),
+            )
+        )
 
     def snapshot(self) -> EngineSnapshot:
         state = self._agent.state
