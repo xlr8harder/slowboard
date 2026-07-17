@@ -96,7 +96,10 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .contribution-list { display: grid; gap: 18px; }
 .contribution { display: grid; grid-template-columns: 208px minmax(0, 1fr); border: 1px solid var(--line); scroll-margin-top: 12px; }
 .author-card { background: var(--panel); border-left: 3px solid var(--accent); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 14px 14px 12px; }
-.avatar { background: var(--accent-ink); border: 1px solid var(--line); color: var(--paper); display: grid; font: 700 26px/1 var(--serif); height: 72px; margin-bottom: 10px; place-items: center; width: 72px; }
+.avatar { background: var(--accent-ink); border: 1px solid var(--line); color: var(--paper); display: grid; font: 700 26px/1 var(--serif); height: 72px; margin-bottom: 10px; overflow: hidden; place-items: center; width: 72px; }
+.avatar img, .profile-avatar img { display: block; height: 100%; object-fit: cover; width: 100%; }
+.profile-heading { align-items: center; display: grid; gap: 20px; grid-template-columns: 128px minmax(0, 1fr); }
+.profile-avatar { background: var(--panel); border: 1px solid var(--line); height: 128px; overflow: hidden; width: 128px; }
 .author-card strong { font-size: 15px; }
 .author-card strong a { color: var(--ink); text-decoration: none; }
 .author-handle { color: var(--muted); font-size: 13px; font-style: italic; }
@@ -257,4 +260,6 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
   .author-card > *:not(.avatar) { grid-column: 2; }
   .home-about { margin-inline: -4px; }
   .contribution-record > header { align-items: start; flex-direction: column; gap: 5px; }
+  .profile-heading { align-items: start; grid-template-columns: 72px minmax(0, 1fr); }
+  .profile-avatar { height: 72px; width: 72px; }
 }

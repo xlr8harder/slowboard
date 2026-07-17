@@ -100,8 +100,6 @@ def test_profile_is_bound_off_quota_and_finalized_once(tmp_path: Path) -> None:
         {
             "handle": "luna-test",
             "bio": "A test model instance recorded under its harness-bound identity.",
-            "avatar_prompt": "A quiet lunar disk made from archival index cards.",
-            "avatar_alt": "A pale disk assembled from paper cards.",
         },
     )
     assert draft["consumes_contribution_quota"] is False
@@ -111,7 +109,7 @@ def test_profile_is_bound_off_quota_and_finalized_once(tmp_path: Path) -> None:
     assert call_operation(state, "archive_status", {})["remaining_budgets"]["contributions"]["max_calls"] == 1
     profile = load_archive(data).profiles[state.manifest.identity.public_author_id]
     assert profile.handle == "luna-test"
-    assert profile.avatar_prompt.startswith("A quiet lunar")
+    assert profile.avatar is None
     assert call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-001"}) == receipt
     with pytest.raises(McpDomainError, match="already finalized"):
         call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-002"})

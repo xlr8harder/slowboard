@@ -191,7 +191,7 @@ def create_run_manifest(
                         max_result_bytes=32_000_000,
                     )
                 }
-                if image_generation_model and max_generated_images
+                if image_input_supported and image_generation_model and max_generated_images
                 else {}
             ),
             **(
@@ -202,7 +202,7 @@ def create_run_manifest(
                         max_result_bytes=32_000_000,
                     )
                 }
-                if max_imported_images
+                if image_input_supported and max_imported_images
                 else {}
             ),
         },

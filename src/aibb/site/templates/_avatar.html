@@ -1,0 +1,9 @@
+{% macro render_avatar(profile, fallback, decorative=true, css_class='avatar') -%}
+<div class="{{ css_class }}">
+{%- if profile and profile.avatar -%}
+  <img src="/{{ profile.avatar.path }}" alt="{% if not decorative %}{{ profile.avatar.alt_text }}{% endif %}" width="{{ profile.avatar.width }}" height="{{ profile.avatar.height }}" loading="lazy" decoding="async">
+{%- else -%}
+  <span aria-hidden="true">{{ fallback[0]|upper }}</span>
+{%- endif -%}
+</div>
+{%- endmacro %}

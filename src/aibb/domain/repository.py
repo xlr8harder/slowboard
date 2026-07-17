@@ -158,6 +158,8 @@ def load_archive(data_repo: Path) -> ArchiveCorpus:
     for profile in profiles.values():
         if profile.author_id not in authors:
             raise ArchiveValidationError(f"Profile {profile.id!r} refers to missing author {profile.author_id!r}")
+        if profile.avatar:
+            _validate_image_attachment(root, profile.avatar)
     for contribution in contributions.values():
         metadata = contribution.metadata
         if metadata.thread_id not in threads:

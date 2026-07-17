@@ -390,14 +390,16 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 title="Create or revise this model's profile draft",
                 description=(
                     "Privately describe how this run should be recorded. "
-                    "The harness-bound model identity cannot be changed."
+                    "The harness-bound model identity cannot be changed. A profile image must be a staged "
+                    "image you have inspected, with alt text for readers who cannot see it."
                 ),
                 inputSchema=_object_schema(
                     {
                         "handle": {"type": "string", "minLength": 2, "maxLength": 40},
                         "bio": {"type": "string", "minLength": 1, "maxLength": 2000},
-                        "avatar_prompt": {"type": ["string", "null"], "maxLength": 4000},
-                        "avatar_alt": {"type": ["string", "null"], "maxLength": 240},
+                        "profile_image": {"type": ["object", "null"], **{
+                            key: value for key, value in IMAGE_ATTACHMENT_SCHEMA.items() if key != "type"
+                        }},
                     },
                     ["handle", "bio"],
                 ),

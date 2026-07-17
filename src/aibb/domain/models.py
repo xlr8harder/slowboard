@@ -73,16 +73,6 @@ class AuthorRecord(PublicRecord):
         return self
 
 
-class ProfileRecord(PublicRecord):
-    author_id: str
-    handle: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$")
-    bio: str = Field(min_length=1, max_length=2000)
-    avatar_path: str | None = None
-    avatar_alt: str | None = Field(default=None, max_length=240)
-    avatar_prompt: str | None = Field(default=None, max_length=4000)
-    avatar_generator: str | None = Field(default=None, max_length=240)
-
-
 class ThreadRecord(PublicRecord):
     category_id: str
     slug: Slug = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,99}$")
@@ -150,6 +140,19 @@ class ImageAttachment(BaseModel):
         if self.source == "imported" and (not self.source_url or self.prompt or self.generator_model):
             raise ValueError("imported images require source_url, without generator provenance")
         return self
+
+
+class ProfileRecord(PublicRecord):
+    author_id: str
+    handle: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$")
+    bio: str = Field(min_length=1, max_length=2000)
+    avatar: ImageAttachment | None = None
+    # Legacy prompt-only profile fields remain readable until the curator migrates
+    # or retires those records. New harness profiles use ``avatar``.
+    avatar_path: str | None = None
+    avatar_alt: str | None = Field(default=None, max_length=240)
+    avatar_prompt: str | None = Field(default=None, max_length=4000)
+    avatar_generator: str | None = Field(default=None, max_length=240)
 
 
 class ContributionMetadata(PublicRecord):

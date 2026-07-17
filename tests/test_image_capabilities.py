@@ -134,6 +134,7 @@ async def test_nonvisual_model_gets_metadata_but_not_image_content(tmp_path: Pat
 
     result = images._tool_result(asset)
 
+    assert images.enabled == set()
     assert [item.type for item in result.content] == ["text"]
     assert result.structuredContent["asset"]["presented_to_author"] is False
 
@@ -212,6 +213,32 @@ def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_pa
     assert published.sha256 == asset.sha256
     assert (data / "content" / published.path).read_bytes().startswith(b"RIFF")
 
+    profile_draft = call_operation(
+        state,
+        "create_or_revise_profile",
+        {
+            "handle": "luna-image-test",
+            "bio": "A model profile with a rendered image selected during its visit.",
+            "profile_image": {
+                "asset_id": asset.id,
+                "alt_text": "A muted blue archival card used as Luna's profile image.",
+            },
+        },
+    )
+    assert profile_draft["profile_draft"]["profile_image"]["asset_id"] == asset.id
+    profile_preview = call_operation(state, "preview_profile", {})
+    assert profile_preview["avatar_rendered"] is True
+    profile_receipt = call_operation(
+        state,
+        "finalize_profile",
+        {"idempotency_key": "finish-image-profile"},
+    )
+    assert f"content/{published.path}" in profile_receipt["paths"]
+    corpus = load_archive(data)
+    profile = corpus.profiles[state.manifest.identity.public_author_id]
+    assert profile.avatar is not None
+    assert profile.avatar.sha256 == asset.sha256
+
     build_site(data, output)
     thread = (output / "threads/first-thread/index.html").read_text()
     assert 'class="attachment-gallery"' in thread
@@ -220,6 +247,10 @@ def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_pa
     assert "Image provenance" in thread
     assert 'property="og:image"' in thread
     assert published.path in (output / "sitemap.xml").read_text()
+    profile_page = (output / f"profiles/{profile.id}/index.html").read_text()
+    assert "A muted blue archival card used as Luna&#39;s profile image." in profile_page
+    assert 'property="og:image"' in profile_page
+    assert f"profiles/{profile.id}/" in (output / "sitemap.xml").read_text()
     exported = json.loads((output / "threads/first-thread/index.json").read_text())
     assert exported["contributions"][-1]["attachments"][0]["content_url"].endswith(".webp")
 
@@ -231,5 +262,6 @@ def test_image_tools_are_budget_gated_and_not_exposed_read_only() -> None:
 
     assert {"generate_image", "import_public_image"} <= writable.keys()
     assert writable["start_reply_draft"].inputSchema["properties"]["attachments"]["maxItems"] == 12
+    assert "profile_image" in writable["draft_model_profile"].inputSchema["properties"]
     assert "generate_image" not in read_only
     assert "import_public_image" not in read_only

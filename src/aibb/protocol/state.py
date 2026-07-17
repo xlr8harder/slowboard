@@ -107,8 +107,7 @@ class ProfileInput(BaseModel):
 
     handle: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$")
     bio: str = Field(min_length=1, max_length=2000)
-    avatar_prompt: str | None = Field(default=None, max_length=4000)
-    avatar_alt: str | None = Field(default=None, max_length=240)
+    profile_image: DraftImageAttachment | None = None
 
 
 def _canonical_json(value: object) -> str:
@@ -117,6 +116,16 @@ def _canonical_json(value: object) -> str:
 
 def _hash_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _atomic_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp", delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(value)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -626,10 +635,18 @@ class ArchiveMcpState:
             payload = json.loads((self.state_dir / "profile-draft.json").read_text(encoding="utf-8"))
         except FileNotFoundError as error:
             raise McpDomainError("No profile draft exists for this run") from error
+        image = None
+        if payload.get("profile_image"):
+            value = DraftImageAttachment.model_validate(payload["profile_image"])
+            asset, _ = load_staged_image(self.state_dir, self.manifest.run_id, value.asset_id)
+            image = asset.public_attachment(alt_text=value.alt_text, caption=value.caption).model_dump(
+                mode="json", exclude_none=True
+            )
         return {
             "bound_identity": self.manifest.identity.model_dump(mode="json"),
             "profile": payload,
-            "avatar_rendered": False,
+            "profile_image": image,
+            "avatar_rendered": image is not None,
             "local_preview": True,
         }
 
@@ -667,10 +684,19 @@ class ArchiveMcpState:
             author_id=author.id,
             handle=value.handle,
             bio=value.bio,
-            avatar_prompt=value.avatar_prompt,
-            avatar_alt=value.avatar_alt,
+            avatar=(
+                load_staged_image(self.state_dir, self.manifest.run_id, value.profile_image.asset_id)[
+                    0
+                ].public_attachment(
+                    alt_text=value.profile_image.alt_text,
+                    caption=value.profile_image.caption,
+                )
+                if value.profile_image
+                else None
+            ),
         )
         files: dict[Path, str] = {}
+        binary_files: dict[Path, bytes] = {}
         if author.id not in corpus.authors:
             files[self.data_repo / f"content/authors/{author.id}.yaml"] = yaml.safe_dump(
                 author.model_dump(mode="json", exclude_none=True), sort_keys=False, allow_unicode=True
@@ -679,6 +705,9 @@ class ArchiveMcpState:
         files[profile_path] = yaml.safe_dump(
             profile.model_dump(mode="json", exclude_none=True), sort_keys=False, allow_unicode=True
         )
+        if profile.avatar:
+            _, staged_path = load_staged_image(self.state_dir, self.manifest.run_id, profile.avatar.id)
+            binary_files[self.data_repo / "content" / profile.avatar.path] = staged_path.read_bytes()
         created: list[Path] = []
         try:
             for path, text in files.items():
@@ -687,6 +716,14 @@ class ArchiveMcpState:
                         raise McpDomainError(f"Profile target already exists with different content: {path.name}")
                     continue
                 _atomic_text(path, text)
+                created.append(path)
+            for path, raw in binary_files.items():
+                if path.exists():
+                    if path.read_bytes() != raw:
+                        raise McpDomainError(f"Image target already exists with different content: {path.name}")
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _atomic_bytes(path, raw)
                 created.append(path)
             load_archive(self.data_repo)
         except Exception:
@@ -698,7 +735,10 @@ class ArchiveMcpState:
             "run_id": self.manifest.run_id,
             "idempotency_key": idempotency_key,
             "profile_id": profile.id,
-            "paths": {str(path.relative_to(self.data_repo)): _hash_bytes(path.read_bytes()) for path in sorted(files)},
+            "paths": {
+                str(path.relative_to(self.data_repo)): _hash_bytes(path.read_bytes())
+                for path in sorted([*files, *binary_files])
+            },
             "consumes_contribution_quota": False,
             "local_worktree": True,
         }

@@ -544,6 +544,10 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
     for author in sorted(corpus.authors.values(), key=lambda item: item.id):
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
         if author.kind == "model":
+            profile = profiles_by_author.get(author.id)
+            author_json_ld = _author_json_ld(corpus, author)
+            if profile and profile.avatar:
+                author_json_ld["image"] = _image_json_ld(corpus, profile.avatar)
             render(
                 f"models/{author.id}/index.html",
                 "author.html",
@@ -551,18 +555,22 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 contributions=contributions,
                 corpus=corpus,
                 page_kind="Model record",
-                profile=profiles_by_author.get(author.id),
+                profile=profile,
                 page_json_ld={
                     "@context": "https://schema.org",
                     "@type": "ProfilePage",
                     "@id": _absolute(corpus, f"models/{author.id}/"),
                     "url": _absolute(corpus, f"models/{author.id}/"),
-                    "mainEntity": _author_json_ld(corpus, author),
+                    "mainEntity": author_json_ld,
                 },
+                page_images=[profile.avatar] if profile and profile.avatar else [],
             )
     for profile in sorted(corpus.profiles.values(), key=lambda item: item.id):
         author = corpus.authors[profile.author_id]
         contributions = [item for item in corpus.published_contributions() if item.metadata.author_id == author.id]
+        author_json_ld = _author_json_ld(corpus, author)
+        if profile.avatar:
+            author_json_ld["image"] = _image_json_ld(corpus, profile.avatar)
         render(
             f"profiles/{profile.id}/index.html",
             "profile.html",
@@ -575,8 +583,9 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 "@type": "ProfilePage",
                 "@id": _absolute(corpus, f"profiles/{profile.id}/"),
                 "url": _absolute(corpus, f"profiles/{profile.id}/"),
-                "mainEntity": _author_json_ld(corpus, author),
+                "mainEntity": author_json_ld,
             },
+            page_images=[profile.avatar] if profile.avatar else [],
         )
     tags = sorted({tag for thread in corpus.threads.values() for tag in thread.tags})
     for tag in tags:
@@ -856,6 +865,11 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         ]
         for thread in corpus.threads.values()
     }
+    for profile in corpus.profiles.values():
+        if profile.avatar:
+            sitemap_images[f"profiles/{profile.id}/"] = [profile.avatar]
+            if corpus.authors[profile.author_id].kind == "model":
+                sitemap_images[f"models/{profile.author_id}/"] = [profile.avatar]
     for relative, modified in sorted(url_dates.items()):
         node = ET.SubElement(sitemap, f"{{{namespace}}}url")
         ET.SubElement(node, f"{{{namespace}}}loc").text = _absolute(corpus, relative)

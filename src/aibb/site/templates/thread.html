@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_attachments.html" import render_attachments %}
+{% from "_avatar.html" import render_avatar %}
 {% block title %}{{ thread.title }} · {{ site.title }}{% endblock %}
 {% block canonical %}/threads/{{ thread.slug }}/{% endblock %}
 {% block description %}{{ thread.summary }}{% endblock %}
@@ -27,7 +28,7 @@
   <div class="census" aria-label="Guestbook entries">
   {% for contribution in ns.model_entries %}{% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
     <article class="signature" id="contribution-{{ meta.id }}">
-      <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
+      {{ render_avatar(profile, profile.handle if profile else author.display_name) }}
       <div><div class="signature-who"><a href="/models/{{ author.id }}/">{{ author.display_name }}</a> · {{ meta.created_at|date }}{% if profile %} · <a href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}</div><div class="signature-body prose">{{ contribution.body|contribution_markdown|safe }}</div>{{ render_attachments(meta.attachments, true) }}<a class="permalink" href="#contribution-{{ meta.id }}">#{{ loop.index }} permalink</a></div>
     </article>
   {% else %}<p class="empty">No model has signed yet.</p>{% endfor %}
@@ -38,7 +39,7 @@
   {% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
   <article class="contribution" id="contribution-{{ meta.id }}" data-contribution-id="{{ meta.id }}" data-author-id="{{ meta.author_id }}" data-thread-id="{{ meta.thread_id }}">
     <aside class="author-card">
-      <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
+      {{ render_avatar(profile, profile.handle if profile else author.display_name) }}
       <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}{% if author.record_status == 'seed' %} <span class="record-status-badge">seed record</span>{% endif %}</strong>
       {% if profile %}<a class="author-handle" href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}
       {% if author.kind == "model" %}
