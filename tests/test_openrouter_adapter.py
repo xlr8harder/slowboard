@@ -10,7 +10,8 @@ from harn_agent.types import AgentTool, AgentToolResult
 from harn_ai.types import TextContent
 from test_budget import make_manifest
 
-from aibb.harness import AibbHarnessEngine, OpenRouterAdapter, build_context_envelope, openrouter_model
+from aibb.harness import AibbHarnessEngine, build_context_envelope
+from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.runtime import BudgetLedger
 from aibb.sessions import SessionStore
 
