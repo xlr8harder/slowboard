@@ -23,7 +23,7 @@ from aibb.domain.models import (
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 UNSAFE_MARKUP = re.compile(
-    r"<\s*(script|iframe|object|embed|form|style)\b|\bon\w+\s*=|(?:javascript|data\s*:\s*text/html)\s*:",
+    r"<\s*(script|iframe|object|embed|form|style)\b|\bon\w+\s*=|(?:javascript\s*:|data\s*:\s*text/html)",
     re.IGNORECASE,
 )
 

@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -148,17 +149,60 @@ class ArchiveMcpState:
     def corpus(self):
         return load_archive(self.data_repo)
 
+    def _worktree_paths(self) -> set[str]:
+        if (self.data_repo / ".git").exists():
+            result = subprocess.run(
+                ["git", "-C", str(self.data_repo), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                check=True,
+                capture_output=True,
+            )
+            paths: set[str] = set()
+            entries = result.stdout.decode("utf-8", errors="strict").split("\0")
+            skip_next = False
+            for entry in entries:
+                if not entry:
+                    continue
+                if skip_next:
+                    paths.add(entry)
+                    skip_next = False
+                    continue
+                status = entry[:2]
+                paths.add(entry[3:])
+                if "R" in status or "C" in status:
+                    skip_next = True
+            return paths
+        paths = set()
+        for receipt_path in self.receipts_dir.glob("*.json"):
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            paths.update(receipt.get("paths", {}))
+        return paths
+
     def archive_status(self) -> dict[str, object]:
         corpus = self.corpus()
+        worktree_paths = self._worktree_paths()
+        local_contributions = {
+            item.metadata.id for item in corpus.contributions.values() if item.source_path in worktree_paths
+        }
+        local_threads = {
+            item.id for item in corpus.threads.values() if f"content/threads/{item.id}.yaml" in worktree_paths
+        }
+        local_profiles = {
+            item.id for item in corpus.profiles.values() if f"content/profiles/{item.id}.yaml" in worktree_paths
+        }
         return {
             "status": "ready",
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
             "published": {
                 "categories": len(corpus.categories),
-                "threads": len(corpus.threads),
-                "contributions": len(corpus.published_contributions()),
-                "profiles": len(corpus.profiles),
+                "threads": len(corpus.threads) - len(local_threads),
+                "contributions": len(corpus.published_contributions()) - len(local_contributions),
+                "profiles": len(corpus.profiles) - len(local_profiles),
+            },
+            "local_worktree": {
+                "threads": len(local_threads),
+                "contributions": len(local_contributions),
+                "profiles": len(local_profiles),
             },
             "remaining_budgets": self.ledger.remaining(),
             "expiry": self.manifest.expires_at.isoformat(),
@@ -183,6 +227,7 @@ class ArchiveMcpState:
                 {
                     **item.model_dump(mode="json"),
                     "contribution_count": len(service.contributions_for_thread(item.id)),
+                    "local_worktree": f"content/threads/{item.id}.yaml" in self._worktree_paths(),
                 }
                 for item in threads
             ]
@@ -210,14 +255,15 @@ class ArchiveMcpState:
             raise McpDomainError(f"Unknown contribution: {contribution_id}") from error
         return self._contribution_result(corpus, contribution)
 
-    @staticmethod
-    def _contribution_result(corpus, contribution) -> dict[str, object]:
+    def _contribution_result(self, corpus, contribution) -> dict[str, object]:
         metadata = contribution.metadata
+        local = contribution.source_path in self._worktree_paths()
         return {
             "metadata": metadata.model_dump(mode="json", exclude_none=True),
             "body": contribution.body,
             "author": corpus.authors[metadata.author_id].model_dump(mode="json", exclude_none=True),
-            "local_worktree": False,
+            "local_worktree": local,
+            "publication_state": "local_worktree" if local else "published",
         }
 
     def read_profile(self, profile_id: str) -> dict[str, object]:
@@ -229,6 +275,7 @@ class ArchiveMcpState:
         return {
             "profile": profile.model_dump(mode="json", exclude_none=True),
             "author": corpus.authors[profile.author_id].model_dump(mode="json", exclude_none=True),
+            "local_worktree": f"content/profiles/{profile.id}.yaml" in self._worktree_paths(),
         }
 
     def search(self, query: str, category_id: str | None, model_name: str | None, limit: int) -> dict[str, object]:

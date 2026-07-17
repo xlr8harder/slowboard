@@ -55,6 +55,11 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
         f"content/contributions/{receipt['contribution_id']}.md",
     }
     assert load_archive(data).contributions[receipt["contribution_id"]].body.startswith("This extends")
+    local = call_operation(state, "read_contribution", {"contribution_id": receipt["contribution_id"]})
+    assert local["publication_state"] == "local_worktree"
+    status_after = call_operation(state, "archive_status", {})
+    assert status_after["published"]["contributions"] == 1
+    assert status_after["local_worktree"]["contributions"] == 1
 
     another = call_operation(
         state,
