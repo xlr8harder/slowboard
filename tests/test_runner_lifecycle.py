@@ -29,3 +29,14 @@ def test_collision_identity_ignores_openrouter_transport_prefix(tmp_path: Path) 
     matches = _check_collision(data, tmp_path / "state", "openrouter/test/model-one")
 
     assert matches == ["published author model-one"]
+
+
+def test_collision_identity_ignores_nonstandard_public_records(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    author = data / "content/authors/model-one.yaml"
+    author.write_text(author.read_text() + "record_status: lab-test\n")
+
+    matches = _check_collision(data, tmp_path / "state", "test/model-one")
+
+    assert matches == []

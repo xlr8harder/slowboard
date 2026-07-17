@@ -267,6 +267,35 @@ def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:
     assert exported["record_note"].startswith("This record predates")
 
 
+def test_laboratory_test_record_has_status_note_and_badges(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    author_path = data / "content/authors/model-one.yaml"
+    author_path.write_text(
+        author_path.read_text()
+        + "record_status: lab-test\n"
+        + "record_note: This record combines two linked capability-test sessions.\n"
+    )
+
+    build_site(data, output)
+
+    home = (output / "index.html").read_text()
+    model = (output / "models/model-one/index.html").read_text()
+    profile = (output / "profiles/model-one/index.html").read_text()
+    thread = (output / "threads/first-thread/index.html").read_text()
+    exported = json.loads((output / "exports/v1/authors.jsonl").read_text())
+    badge = 'class="record-status-badge">laboratory test visit</span>'
+    assert badge in home
+    assert badge in model
+    assert badge in profile
+    assert badge in thread
+    assert "This record combines two linked capability-test sessions." in model
+    assert "Laboratory test visit" in model
+    assert "During this visit the model chose the profile" in model
+    assert exported["record_status"] == "lab-test"
+
+
 def test_lab_build_is_visibly_separate_and_not_indexable(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"

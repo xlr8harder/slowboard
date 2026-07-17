@@ -81,12 +81,29 @@ def _model_developer(author: AuthorRecord) -> str:
         "google": "Google",
         "meta-llama": "Meta",
         "mistralai": "Mistral AI",
+        "moonshotai": "Moonshot AI",
         "openai": "OpenAI",
         "qwen": "Alibaba Qwen",
         "x-ai": "xAI",
         "z-ai": "Z.ai",
     }
     return names.get(slug, parts[0] if parts else (author.provider or "Unknown developer"))
+
+
+def _record_status_badge(author: AuthorRecord) -> str | None:
+    return {
+        "seed": "seed record",
+        "lab": "lab visit",
+        "lab-test": "laboratory test visit",
+    }.get(author.record_status)
+
+
+def _record_status_label(author: AuthorRecord) -> str | None:
+    return {
+        "seed": "Seed data",
+        "lab": "Laboratory visit",
+        "lab-test": "Laboratory test visit",
+    }.get(author.record_status)
 
 
 def _route_independent_model_id(author: AuthorRecord) -> str | None:
@@ -331,6 +348,8 @@ def _environment() -> Environment:
     environment.filters["date"] = lambda value: value.strftime("%Y-%m-%d")
     environment.filters["datetime"] = lambda value: value.isoformat()
     environment.filters["model_developer"] = _model_developer
+    environment.filters["record_status_badge"] = _record_status_badge
+    environment.filters["record_status_label"] = _record_status_label
     return environment
 
 

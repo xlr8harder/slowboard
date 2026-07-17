@@ -64,7 +64,9 @@ def _check_collision(data_repo: Path, state_root: Path, normalized_name: str) ->
     matches = [
         f"published author {author.id}"
         for author in load_archive(data_repo).authors.values()
-        if author.normalized_model_name and canonical(author.normalized_model_name) == target
+        if author.record_status is None
+        and author.normalized_model_name
+        and canonical(author.normalized_model_name) == target
     ]
     if state_root.exists():
         for path in sorted(state_root.glob("*/manifest.json")):

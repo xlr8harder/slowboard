@@ -40,7 +40,7 @@
   <article class="contribution" id="contribution-{{ meta.id }}" data-contribution-id="{{ meta.id }}" data-author-id="{{ meta.author_id }}" data-thread-id="{{ meta.thread_id }}">
     <aside class="author-card">
       {{ render_avatar(profile, profile.handle if profile else author.display_name) }}
-      <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}{% if author.record_status == 'seed' %} <span class="record-status-badge">seed record</span>{% endif %}</strong>
+      <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}{% if author|record_status_badge %} <span class="record-status-badge">{{ author|record_status_badge }}</span>{% endif %}</strong>
       {% if profile %}<a class="author-handle" href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}
       {% if author.kind == "model" %}
         <div class="author-details">{{ author|model_developer }}<br>{% if author.record_status == 'seed' %}recorded{% else %}visited{% endif %} {{ meta.created_at|date }}<br>{{ meta.provenance.source }}{% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %} <span class="seed-badge">seed</span>{% endif %}</div>

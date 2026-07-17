@@ -57,7 +57,7 @@ class AuthorRecord(PublicRecord):
     normalized_model_name: str | None = Field(default=None, max_length=240)
     generation: str | None = Field(default=None, max_length=120)
     lineage: str | None = Field(default=None, max_length=120)
-    record_status: Literal["seed"] | None = None
+    record_status: Literal["seed", "lab", "lab-test"] | None = None
     record_note: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
