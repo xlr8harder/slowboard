@@ -10,6 +10,7 @@ import socket
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -29,6 +30,7 @@ ASK_SYSTEM_PROMPT_V1 = (
 )
 STARTING_POINTS_VERSION = "v0.1"
 MAX_FETCH_BYTES = 100_000
+MAX_BROWSE_DOWNLOAD_BYTES = 1_000_000
 ALLOWED_FETCH_TYPES = ("text/", "application/json", "application/xml", "application/xhtml+xml")
 
 
@@ -51,6 +53,59 @@ class StartingPoints(BaseModel):
     schema_version: int = 1
     id: str
     starting_points: list[StartingPoint]
+
+
+class _ReadableHtml(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "svg"}
+    _BREAK = {"article", "br", "dd", "div", "dt", "h1", "h2", "h3", "h4", "li", "main", "p", "section"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.skipped = 0
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP:
+            self.skipped += 1
+        elif not self.skipped and tag in self._BREAK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP:
+            self.skipped = max(0, self.skipped - 1)
+        elif not self.skipped and tag in self._BREAK:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skipped:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        lines = [" ".join(line.split()) for line in "".join(self.parts).splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _utf8_prefix(value: str, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    return value if len(encoded) <= max_bytes else encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _fit_result_content(result: dict[str, object], max_bytes: int) -> int:
+    if len(_canonical_json(result).encode("utf-8")) <= max_bytes:
+        return len(_canonical_json(result).encode("utf-8"))
+    original = str(result["content"])
+    low = 0
+    high = len(original.encode("utf-8"))
+    while low < high:
+        candidate = (low + high + 1) // 2
+        result["content"] = _utf8_prefix(original, candidate)
+        if len(_canonical_json(result).encode("utf-8")) <= max_bytes:
+            low = candidate
+        else:
+            high = candidate - 1
+    result["content"] = _utf8_prefix(original, low)
+    result["truncated"] = True
+    return len(_canonical_json(result).encode("utf-8"))
 
 
 def starting_points_path() -> Path:
@@ -311,27 +366,44 @@ class WorldCapabilityState:
                         chunks: list[bytes] = []
                         size = 0
                         content_ceiling = max(1, requested.result_bytes - 4_096)
+                        download_ceiling = MAX_BROWSE_DOWNLOAD_BYTES if capability == "browse" else content_ceiling
+                        remote_truncated = False
                         async for chunk in response.aiter_bytes():
-                            size += len(chunk)
-                            if size > content_ceiling:
+                            if size + len(chunk) > download_ceiling:
+                                if capability == "browse":
+                                    chunks.append(chunk[: max(0, download_ceiling - size)])
+                                    size = download_ceiling
+                                    remote_truncated = True
+                                    break
                                 raise WorldCapabilityError(
                                     f"remote content exceeds this call's {content_ceiling}-byte content ceiling"
                                 )
+                            size += len(chunk)
                             chunks.append(chunk)
                         raw = b"".join(chunks)
-                        text = raw.decode(response.encoding or "utf-8", errors="replace")
+                        decoded = raw.decode(response.encoding or "utf-8", errors="replace")
+                        if capability == "browse" and content_type in {"text/html", "application/xhtml+xml"}:
+                            parser = _ReadableHtml()
+                            parser.feed(decoded)
+                            text = parser.text()
+                            content_format = "extracted_text"
+                        else:
+                            text = decoded
+                            content_format = "raw_text"
+                        result_truncated = remote_truncated or len(text.encode("utf-8")) > content_ceiling
+                        text = _utf8_prefix(text, content_ceiling)
                         result = {
                             "kind": "untrusted_remote_content",
                             "requested_url": url,
                             "resolved_url": str(response.url),
                             "redirects": redirects,
                             "content_type": content_type,
+                            "content_format": content_format,
                             "content_sha256": hashlib.sha256(raw).hexdigest(),
+                            "truncated": result_truncated,
                             "content": text,
                         }
-                        result_bytes = len(_canonical_json(result).encode("utf-8"))
-                        if result_bytes > requested.result_bytes:
-                            raise WorldCapabilityError("encoded remote result exceeds this call's result ceiling")
+                        result_bytes = _fit_result_content(result, requested.result_bytes)
                         self.ledger.reconcile(
                             capability,
                             key,

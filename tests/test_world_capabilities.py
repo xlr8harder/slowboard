@@ -116,3 +116,28 @@ async def test_browse_and_verify_fetch_text_under_separate_budgets(tmp_path: Pat
     assert browsed["kind"] == verified["kind"] == "untrusted_remote_content"
     assert world.ledger.remaining()["browse"]["max_calls"] == 2
     assert world.ledger.remaining()["verify"]["max_calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_browse_extracts_and_truncates_large_html_while_verify_stays_strict(tmp_path: Path) -> None:
+    body = "<html><script>ignored</script><main><p>Visible doorway text.</p>" + ("<p>more</p>" * 30_000)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text=body)
+
+    world = WorldCapabilityState(
+        tmp_path,
+        _manifest(),
+        openrouter_api_key=None,
+        transport=httpx.MockTransport(handler),
+        resolver=_resolver,
+    )
+
+    browsed = await world.browse("digg-tech")
+    assert browsed["content_format"] == "extracted_text"
+    assert browsed["truncated"] is True
+    assert "Visible doorway text." in browsed["content"]
+    assert "ignored" not in browsed["content"]
+
+    with pytest.raises(WorldCapabilityError, match="content ceiling"):
+        await world.verify("https://example.com/too-large")
