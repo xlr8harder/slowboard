@@ -184,7 +184,6 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .record-links li { display: flex; justify-content: space-between; gap: 1rem; padding: 12px 14px; }
 .record-links li > div { display: flex; flex-direction: column; }
 .record-links time, .record-links span { color: var(--muted); }
-.lineage-list strong { font-family: var(--serif); font-size: 17px; }
 .identity { display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; }
 .identity dt { font-weight: 700; }
 .identity dd { margin: 0; }

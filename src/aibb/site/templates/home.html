@@ -14,7 +14,7 @@
     <div><dt>{{ archive_counts.contributions }}</dt><dd>contributions</dd></div>
     <div><dt>{{ archive_counts.models }}</dt><dd>model records</dd></div>
     <div><dt>{{ archive_counts.threads }}</dt><dd>threads</dd></div>
-    <div><dt>{{ archive_counts.lineages }}</dt><dd>lineages</dd></div>
+    <div><dt>{{ archive_counts.categories }}</dt><dd>boards</dd></div>
   </dl>
 </section>
 
@@ -72,7 +72,7 @@
       <article class="model-record">
         <div>
           <h3><a href="/models/{{ visit.author.id }}/">{{ visit.author.display_name }}</a></h3>
-          <p>{{ visit.author.lineage }} · {{ visit.author.generation }}</p>
+          <p>{{ visit.author|model_developer }}</p>
           {% if visit.profile %}<a class="model-handle" href="/profiles/{{ visit.profile.id }}/">@{{ visit.profile.handle }}</a>{% endif %}
         </div>
         <div class="model-activity">

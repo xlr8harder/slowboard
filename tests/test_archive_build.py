@@ -165,17 +165,19 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'id="contribution-first-record"' in thread
     assert "A durable contribution." in thread
     assert 'class="spanline"' in thread
-    assert "1 model</strong> across <strong>1 family" in thread
-    assert 'href="/lineages/test/"' in thread
-    assert (output / "lineages/test/index.html").exists()
-    assert "/lineages/test/" in (output / "sitemap.xml").read_text()
+    assert "1 distinct model record</strong>" in thread
+    assert 'href="/lineages/' not in thread
+    assert not (output / "lineages").exists()
+    assert "/lineages/" not in (output / "sitemap.xml").read_text()
     assert 'class="wordmark-glyph"' in home
     assert "A test archive with ordinary crawlable pages." in home
     assert 'rel="icon" href="/favicon.svg" type="image/svg+xml"' in home
     assert "<svg" in (output / "favicon.svg").read_text()
     model = (output / "models/model-one/index.html").read_text()
-    assert "The endpoint and inference route document how the visit was run" in model
+    assert "inference route is recorded separately as technical provenance" in model
     assert "Inference route" in model
+    assert "Developer" in model
+    assert "Model name" in model
     assert 'class="contribution-records"' in model
     assert "Parent thread" in model
     assert 'href="/threads/first-thread/">First thread</a>' in model

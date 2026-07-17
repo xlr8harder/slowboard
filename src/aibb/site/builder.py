@@ -40,22 +40,11 @@ class RecentModel:
 
 
 @dataclass(frozen=True)
-class LineageView:
-    name: str
-    slug: str
-    authors: list[AuthorRecord]
-    contribution_count: int
-    first_at: datetime
-    latest_at: datetime
-
-
-@dataclass(frozen=True)
 class ThreadSpan:
     count: int
     first_year: int
     last_year: int
     model_count: int
-    lineages: list[LineageView]
     status: object
 
 
@@ -71,6 +60,47 @@ def _canonical_json(value: object) -> str:
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def _model_developer(author: AuthorRecord) -> str:
+    """Derive the developer from a route-independent model identifier."""
+
+    identifier = author.normalized_model_name or author.model_name or ""
+    parts = [part for part in identifier.split("/") if part]
+    if parts and parts[0].casefold() == "openrouter":
+        parts = parts[1:]
+    slug = parts[0].casefold() if parts else ""
+    names = {
+        "anthropic": "Anthropic",
+        "deepseek": "DeepSeek",
+        "google": "Google",
+        "meta-llama": "Meta",
+        "mistralai": "Mistral AI",
+        "openai": "OpenAI",
+        "qwen": "Alibaba Qwen",
+        "x-ai": "xAI",
+        "z-ai": "Z.ai",
+    }
+    return names.get(slug, parts[0] if parts else (author.provider or "Unknown developer"))
+
+
+def _route_independent_model_id(author: AuthorRecord) -> str | None:
+    identifier = author.normalized_model_name or author.model_name
+    if not identifier:
+        return None
+    parts = [part for part in identifier.split("/") if part]
+    if parts and parts[0].casefold() == "openrouter":
+        parts = parts[1:]
+    return "/".join(parts)
+
+
+def _public_author_record(author: AuthorRecord) -> dict[str, object]:
+    record = author.model_dump(mode="json", exclude_none=True, exclude={"lineage", "provider"})
+    if author.kind == "model":
+        record["developer"] = _model_developer(author)
+        record["normalized_model_name"] = _route_independent_model_id(author)
+        record["inference_route"] = author.provider
+    return record
 
 
 def _contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
@@ -100,7 +130,7 @@ def _export_record(corpus: ArchiveCorpus, contribution: ContributionDocument) ->
             "category_id": thread.category_id,
             "canonical_url": _absolute(corpus, f"threads/{thread.slug}/"),
         },
-        "author": author.model_dump(mode="json", exclude_none=True),
+        "author": _public_author_record(author),
         "created_at": metadata.created_at.isoformat(),
         "title": metadata.title,
         "body_markdown": contribution.body,
@@ -129,7 +159,7 @@ def _export_document_record(corpus: ArchiveCorpus, document: OriginDocument) -> 
         "title": metadata.title,
         "summary": metadata.summary,
         "created_at": metadata.created_at.isoformat(),
-        "author": author.model_dump(mode="json", exclude_none=True),
+        "author": _public_author_record(author),
         "body_markdown": document.body,
         "provenance": metadata.provenance.model_dump(mode="json", exclude_none=True),
         "license": corpus.site.license,
@@ -154,7 +184,8 @@ def _author_json_ld(corpus: ArchiveCorpus, author: AuthorRecord) -> dict[str, ob
             {
                 "applicationCategory": "Artificial intelligence model",
                 "softwareVersion": author.generation,
-                "alternateName": author.normalized_model_name,
+                "alternateName": _route_independent_model_id(author),
+                "creator": {"@type": "Organization", "name": _model_developer(author)},
             }
         )
     return result
@@ -295,7 +326,7 @@ def _environment() -> Environment:
     environment.filters["excerpt"] = contribution_excerpt
     environment.filters["date"] = lambda value: value.strftime("%Y-%m-%d")
     environment.filters["datetime"] = lambda value: value.isoformat()
-    environment.filters["lineage_slug"] = _slug
+    environment.filters["model_developer"] = _model_developer
     return environment
 
 
@@ -335,7 +366,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "contributions": len(published),
         "models": len(recent_models),
         "threads": len(published_threads),
-        "lineages": len({item.author.lineage for item in recent_models}),
+        "categories": len(categories),
     }
     site_json_ld = {
         "@context": "https://schema.org",
@@ -355,33 +386,9 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             "query-input": "required name=search_term_string",
         },
     }
-    lineage_views: list[LineageView] = []
-    for name in sorted({author.lineage for author in corpus.authors.values() if author.kind == "model"}):
-        assert name is not None
-        authors = sorted(
-            [author for author in corpus.authors.values() if author.kind == "model" and author.lineage == name],
-            key=lambda author: (author.created_at, author.id),
-        )
-        author_ids = {item.id for item in authors}
-        lineage_contributions = [
-            contribution for contribution in published if contribution.metadata.author_id in author_ids
-        ]
-        dates = [item.metadata.created_at for item in lineage_contributions] or [item.created_at for item in authors]
-        lineage_views.append(
-            LineageView(
-                name=name,
-                slug=_slug(name),
-                authors=authors,
-                contribution_count=len(lineage_contributions),
-                first_at=min(dates),
-                latest_at=max(dates),
-            )
-        )
-    lineages_by_name = {item.name: item for item in lineage_views}
     common = {
         "site": corpus.site,
         "categories": categories,
-        "lineages": lineage_views,
         "curator_profile": curator_profile,
         "site_json_ld": site_json_ld,
         "page_json_ld": None,
@@ -446,10 +453,6 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
             for contribution in contributions
             if corpus.authors[contribution.metadata.author_id].kind == "model"
         }
-        thread_lineages = sorted(
-            {author.lineage for author in thread_authors.values() if author.lineage},
-            key=str.casefold,
-        )
         dates = [contribution.metadata.created_at for contribution in contributions] or [thread.created_at]
         render(
             f"threads/{thread.slug}/index.html",
@@ -469,7 +472,6 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 first_year=min(dates).year,
                 last_year=max(dates).year,
                 model_count=len(thread_authors),
-                lineages=[lineages_by_name[name] for name in thread_lineages],
                 status=service.thread_status(thread.id),
             ),
             page_json_ld=_thread_json_ld(corpus, thread, contributions),
@@ -529,7 +531,6 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 contributions=contributions,
                 corpus=corpus,
                 page_kind="Model record",
-                lineage=lineages_by_name[author.lineage],
                 profile=profiles_by_author.get(author.id),
                 page_json_ld={
                     "@context": "https://schema.org",
@@ -557,21 +558,6 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 "mainEntity": _author_json_ld(corpus, author),
             },
         )
-    render("lineages/index.html", "lineages.html")
-    for lineage in lineage_views:
-        contributions = [
-            item
-            for item in published
-            if corpus.authors[item.metadata.author_id].kind == "model"
-            and corpus.authors[item.metadata.author_id].lineage == lineage.name
-        ]
-        render(
-            f"lineages/{lineage.slug}/index.html",
-            "lineage.html",
-            lineage=lineage,
-            contributions=contributions,
-            corpus=corpus,
-        )
     tags = sorted({tag for thread in corpus.threads.values() for tag in thread.tags})
     for tag in tags:
         threads = [thread for thread in corpus.threads.values() if tag in thread.tags]
@@ -585,7 +571,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     document_records = [_export_document_record(corpus, item) for item in corpus.published_documents()]
     author_records = [
         {
-            **item.model_dump(mode="json", exclude_none=True),
+            **_public_author_record(item),
             "canonical_url": _author_url(corpus, item),
         }
         for item in sorted(corpus.authors.values(), key=lambda item: item.id)
@@ -681,7 +667,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "category_id": thread.category_id,
                 "author_id": author.id,
                 "author": author.display_name,
-                "model": author.normalized_model_name,
+                "model": _route_independent_model_id(author),
                 "created_at": contribution.metadata.created_at.isoformat(),
                 "text": " ".join([contribution.metadata.title or "", contribution.body]),
             }
@@ -699,7 +685,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "category_id": "",
                 "author_id": author.id,
                 "author": author.display_name,
-                "model": author.normalized_model_name,
+                "model": _route_independent_model_id(author),
                 "created_at": metadata.created_at.isoformat(),
                 "text": " ".join([metadata.title, metadata.summary, document.body]),
             }
@@ -754,7 +740,6 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "": archive_updated,
         "about/": archive_updated,
         "search/": archive_updated,
-        "lineages/": archive_updated,
         "exports/v1/manifest.json": archive_updated,
     }
     for category in corpus.categories.values():
@@ -784,14 +769,6 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
             if item.metadata.author_id == profile.author_id
         ]
         url_dates[f"profiles/{profile.id}/"] = max([profile.created_at, *dates])
-    for lineage in {author.lineage for author in corpus.authors.values() if author.kind == "model"}:
-        if lineage:
-            dates = [
-                author.created_at
-                for author in corpus.authors.values()
-                if author.kind == "model" and author.lineage == lineage
-            ]
-            url_dates[f"lineages/{_slug(lineage)}/"] = max(dates)
     for tag in sorted({tag for item in corpus.threads.values() for tag in item.tags}):
         dates = [service.last_activity(thread.id) for thread in corpus.threads.values() if tag in thread.tags]
         url_dates[f"tags/{tag}/"] = max(dates)

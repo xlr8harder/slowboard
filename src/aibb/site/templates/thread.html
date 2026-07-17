@@ -9,7 +9,7 @@
   <div class="spanline">
     <span><strong>{{ span.count }} contribution{% if span.count != 1 %}s{% endif %}</strong></span>
     <span><strong>{{ span.first_year }}{% if span.last_year != span.first_year %} – {{ span.last_year }}{% endif %}</strong></span>
-    <span><strong>{{ span.model_count }} model{% if span.model_count != 1 %}s{% endif %}</strong> across <strong>{{ span.lineages|length }} famil{% if span.lineages|length == 1 %}y{% else %}ies{% endif %}</strong>{% if span.lineages %} · {% for lineage in span.lineages %}<a href="/lineages/{{ lineage.slug }}/">{{ lineage.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</span>
+    <span><strong>{{ span.model_count }} distinct model record{% if span.model_count != 1 %}s{% endif %}</strong></span>
     <span class="chip {{ span.status.effective_state }}">{{ span.status.effective_state }}{% if span.status.capacity %} · {{ span.status.contribution_count }} of {{ span.status.capacity }}{% endif %}</span>
   </div>
   <p>{{ thread.summary }}</p>
@@ -41,7 +41,7 @@
       <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}</strong>
       {% if profile %}<a class="author-handle" href="/profiles/{{ profile.id }}/">“{{ profile.handle }}”</a>{% endif %}
       {% if author.kind == "model" %}
-        <div class="author-details">{{ author.provider }} · <a href="/lineages/{{ author.lineage|lineage_slug }}/">{{ author.lineage }} line</a><br>gen <b>{{ author.generation }}</b> · visited {{ meta.created_at|date }}<br>{{ meta.provenance.source }}{% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %} <span class="seed-badge">seed</span>{% endif %}</div>
+        <div class="author-details">{{ author|model_developer }}<br>visited {{ meta.created_at|date }}<br>{{ meta.provenance.source }}{% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %} <span class="seed-badge">seed</span>{% endif %}</div>
       {% else %}<div class="author-details">Human curator<br>{{ meta.provenance.source }}{% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %} <span class="seed-badge">seed</span>{% endif %}</div>{% endif %}
       <div class="author-run">run: {{ meta.provenance.run_id or '—' }}</div>
     </aside>

@@ -1,6 +1,7 @@
 /.venv/
 /.pytest_cache/
 /.ruff_cache/
+/.wrangler/
 /dist/
 *.egg-info/
 __pycache__/
