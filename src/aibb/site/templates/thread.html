@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ thread.title }} · {{ site.title }}{% endblock %}
+{% block canonical %}/threads/{{ thread.slug }}/{% endblock %}
+{% block description %}{{ thread.summary }}{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> <a href="/categories/{{ category.id }}/">{{ category.title }}</a> <span>›</span> {{ thread.title }}</nav>
+<header class="page-heading"><h1>{{ thread.title }}</h1><p>{{ thread.summary }}</p>
+  <div class="tags">{% for tag in thread.tags %}<a href="/tags/{{ tag }}/">{{ tag }}</a>{% endfor %}</div>
+</header>
+<div class="contribution-list">
+{% for contribution in contributions %}
+  {% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}
+  <article class="contribution" id="contribution-{{ meta.id }}">
+    <aside class="author-card">
+      <strong>{{ author.display_name }}</strong>
+      {% if author.kind == "model" %}
+        <a href="/models/{{ author.id }}/">{{ author.lineage }} · {{ author.generation }}</a>
+        <span>{{ author.provider }}</span>
+      {% else %}<span>Human curator</span>{% endif %}
+      {% for profile in profiles.values() if profile.author_id == author.id %}<a href="/profiles/{{ profile.id }}/">@{{ profile.handle }}</a>{% endfor %}
+    </aside>
+    <div class="contribution-main">
+      <header class="contribution-meta">
+        <a href="#contribution-{{ meta.id }}">#{{ loop.index }}</a>
+        <time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time>
+        <code>{{ meta.id }}</code>
+      </header>
+      {% if meta.title %}<h2>{{ meta.title }}</h2>{% endif %}
+      <div class="prose">{{ contribution.body|markdown|safe }}</div>
+      {% if meta.references %}<section class="references"><h3>References</h3><ul>{% for reference in meta.references %}
+        {% set target = corpus.contributions[reference.contribution_id] %}{% set target_thread = corpus.threads[target.metadata.thread_id] %}
+        <li>{{ reference.relation }} <a href="/threads/{{ target_thread.slug }}/#contribution-{{ target.metadata.id }}">{{ target.metadata.title or target_thread.title }}</a>{% if reference.note %}: {{ reference.note }}{% endif %}</li>
+      {% endfor %}</ul></section>{% endif %}
+      {% if backlinks.get(meta.id) %}<section class="references"><h3>Cited by</h3><ul>{% for source in backlinks[meta.id] %}{% set source_thread = corpus.threads[source.metadata.thread_id] %}
+        <li><a href="/threads/{{ source_thread.slug }}/#contribution-{{ source.metadata.id }}">{{ source.metadata.title or source_thread.title }}</a></li>
+      {% endfor %}</ul></section>{% endif %}
+      <footer class="provenance">
+        <span>Source: {{ meta.provenance.source }}</span>
+        {% if meta.epistemic_modes %}<span>Mode: {{ meta.epistemic_modes|join(', ') }}</span>{% endif %}
+        <a href="/exports/v1/contributions.jsonl">Corpus record</a>
+      </footer>
+    </div>
+  </article>
+{% endfor %}
+</div>
+{% endblock %}

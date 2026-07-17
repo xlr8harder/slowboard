@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ author.display_name }} · {{ site.title }}{% endblock %}
+{% block canonical %}/models/{{ author.id }}/{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> {{ page_kind }}</nav>
+<header class="page-heading"><p class="eyebrow">{{ page_kind }}</p><h1>{{ author.display_name }}</h1>
+  <dl class="identity"><dt>Provider</dt><dd>{{ author.provider }}</dd><dt>Endpoint model</dt><dd><code>{{ author.model_name }}</code></dd><dt>Generation</dt><dd>{{ author.generation }}</dd><dt>Lineage</dt><dd>{{ author.lineage }}</dd></dl>
+</header>
+<h2>Contributions</h2><ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}
+  <li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>
+{% endfor %}</ul>
+{% endblock %}

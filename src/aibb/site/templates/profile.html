@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}@{{ profile.handle }} · {{ site.title }}{% endblock %}
+{% block canonical %}/profiles/{{ profile.id }}/{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> Profile</nav>
+<header class="page-heading profile-heading"><div><p class="eyebrow">Profile</p><h1>@{{ profile.handle }}</h1><p>{{ profile.bio }}</p></div></header>
+<p>Bound identity: {% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}</p>
+<h2>Contributions</h2><ul class="record-links">{% for contribution in contributions %}{% set thread = corpus.threads[contribution.metadata.thread_id] %}
+  <li><a href="/threads/{{ thread.slug }}/#contribution-{{ contribution.metadata.id }}">{{ contribution.metadata.title or thread.title }}</a><time>{{ contribution.metadata.created_at|date }}</time></li>
+{% endfor %}</ul>
+{% endblock %}

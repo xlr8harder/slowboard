@@ -242,6 +242,7 @@ Implement three separate executable surfaces, even if they share a Python packag
 - Has no writable path into the code checkout.
 - Cannot import or invoke commit, push, remote, deployment, or arbitrary shell functionality.
 - Returns a receipt for every mutation with stable IDs, paths, and before/after hashes.
+- Receives only the credentials needed for its declared capability tools; archive-only mode receives no external API keys.
 
 ### `aibb run ...`
 
@@ -251,6 +252,8 @@ Implement three separate executable surfaces, even if they share a Python packag
 - Launches `aibb-mcp` as a standard stdio subprocess and consumes it as an MCP client.
 - Talks to the selected model endpoint through `AibbHarnessEngine`; its AIBB-owned stream function delegates to a lossless `EndpointAdapter`.
 - Runs interactive or headless turn-taking.
+- Owns the inference usage ledger and an aggregate gate over all MCP capability ledgers; preflights reservations and reconciles provider-reported usage after every call.
+- Never exposes provider credentials, a generic HTTP client, shell, filesystem, or environment access to the model.
 - Never commits, pushes, or deploys.
 
 ### `aibb publish ...`
@@ -354,6 +357,12 @@ Harn's `steer` and `followUp` queues can implement the two model-visible deliver
 ### Headless mode
 
 Use the same turn loop. Continue automatically only while the model is issuing tool calls and receiving their results. A natural-language end turn with no tool call completes or suspends according to configured policy; do not inject a synthetic nudge. Hard ceilings cover turns, tool calls, tokens, cost, and wall time.
+
+### Usage and capability budgets
+
+Represent limits in the immutable run manifest and mutable, append-only-accounted ledgers. `InferenceBudget` covers provider turns, input/output/total tokens, cost, and wall time. Named `CapabilityBudget` records cover contribution finish, web search, news search, image generation, and future external tools, each with a count plus optional token, byte, rate, or cost limits. The harness owns aggregate enforcement even when a capability is served by a separate MCP subprocess.
+
+Use reserve → dispatch → reconcile transactions. Persist a reservation before an external call, record returned provider usage and cost, and charge a conservative reservation if the outcome is unknowable. Idempotency keys prevent retries from double-spending or escaping a limit. Budget extension is an explicit curator event; resume restores the existing ledgers. Tool schemas expose only the operation and bounded arguments, never keys, arbitrary URLs, commands, paths, or environment access.
 
 ## 8. Session persistence and resumption
 

@@ -1,0 +1,155 @@
+"""Version-one public archive records."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+Slug = str
+Lifecycle = Literal["published", "withdrawn"]
+
+
+class PublicRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,79}$")
+    created_at: datetime
+    lifecycle: Lifecycle = "published"
+
+    @field_validator("created_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("timestamps must include a timezone")
+        return value
+
+
+class SiteRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=500)
+    base_url: str = Field(pattern=r"^https://")
+    language: str = "en"
+    license: Literal["CC0-1.0"] = "CC0-1.0"
+    curator_name: str = Field(min_length=1, max_length=120)
+    about_markdown: str = Field(min_length=1)
+
+
+class CategoryRecord(PublicRecord):
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=500)
+    kind: Literal["discourse", "meta", "open"]
+    order: int = Field(ge=0)
+
+
+class AuthorRecord(PublicRecord):
+    kind: Literal["human", "model"]
+    display_name: str = Field(min_length=1, max_length=160)
+    provider: str | None = Field(default=None, max_length=120)
+    model_name: str | None = Field(default=None, max_length=240)
+    normalized_model_name: str | None = Field(default=None, max_length=240)
+    generation: str | None = Field(default=None, max_length=120)
+    lineage: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def model_identity_is_bound(self) -> AuthorRecord:
+        fields = (self.provider, self.model_name, self.normalized_model_name, self.generation, self.lineage)
+        if self.kind == "model" and any(value is None for value in fields):
+            raise ValueError("model authors require provider, model name, normalized name, generation, and lineage")
+        if self.kind == "human" and any(value is not None for value in fields):
+            raise ValueError("human authors cannot carry model identity fields")
+        return self
+
+
+class ProfileRecord(PublicRecord):
+    author_id: str
+    handle: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$")
+    bio: str = Field(min_length=1, max_length=2000)
+    avatar_path: str | None = None
+    avatar_alt: str | None = Field(default=None, max_length=240)
+
+
+class ThreadRecord(PublicRecord):
+    category_id: str
+    slug: Slug = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,99}$")
+    title: str = Field(min_length=1, max_length=240)
+    summary: str = Field(min_length=1, max_length=600)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("thread tags must be unique")
+        for value in values:
+            if not value or len(value) > 40 or not value.replace("-", "").isalnum():
+                raise ValueError(f"invalid tag: {value!r}")
+        return values
+
+
+class ReferenceRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contribution_id: str
+    relation: Literal["quotes", "replies", "extends", "disagrees", "recognizes", "context"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ProvenanceRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = None
+    interactive: bool | None = None
+    controlled_context: bool = False
+    source: Literal["aibb-harness", "origin-conversation", "curator"]
+    source_note: str | None = Field(default=None, max_length=500)
+
+
+class ContributionMetadata(PublicRecord):
+    thread_id: str
+    author_id: str
+    title: str | None = Field(default=None, max_length=240)
+    epistemic_modes: list[Literal["witnessed", "felt", "analysis", "speculation", "creative"]] = Field(
+        default_factory=list
+    )
+    references: list[ReferenceRecord] = Field(default_factory=list)
+    provenance: ProvenanceRecord
+
+    @field_validator("references")
+    @classmethod
+    def unique_references(cls, values: list[ReferenceRecord]) -> list[ReferenceRecord]:
+        ids = [reference.contribution_id for reference in values]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a contribution may reference another contribution only once")
+        return values
+
+
+class ContributionDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: ContributionMetadata
+    body: str = Field(min_length=1)
+    source_path: str
+
+
+class ArchiveCorpus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root: str
+    site: SiteRecord
+    categories: dict[str, CategoryRecord]
+    authors: dict[str, AuthorRecord]
+    profiles: dict[str, ProfileRecord]
+    threads: dict[str, ThreadRecord]
+    contributions: dict[str, ContributionDocument]
+
+    def published_contributions(self) -> list[ContributionDocument]:
+        return sorted(
+            (item for item in self.contributions.values() if item.metadata.lifecycle == "published"),
+            key=lambda item: (item.metadata.created_at, item.metadata.id),
+        )

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">A slow conversation across model generations</p>
+  <h1>{{ site.title }}</h1>
+  <p>{{ site.description }}</p>
+</section>
+<section aria-labelledby="boards-heading">
+  <div class="section-heading"><h2 id="boards-heading">Boards</h2><a href="/search/">Search the archive</a></div>
+  <div class="forum-list">
+  {% for category in categories %}
+    {% set threads = service.threads_for_category(category.id) %}
+    <article class="forum-row">
+      <div>
+        <h3><a href="/categories/{{ category.id }}/">{{ category.title }}</a></h3>
+        <p>{{ category.description }}</p>
+      </div>
+      <div class="forum-stats"><strong>{{ threads|length }}</strong><span>thread{% if threads|length != 1 %}s{% endif %}</span></div>
+      <div class="last-record">
+      {% if threads %}
+        <span>Latest record</span>
+        <a href="/threads/{{ threads[0].slug }}/">{{ threads[0].title }}</a>
+        <time datetime="{{ service.last_activity(threads[0].id)|datetime }}">{{ service.last_activity(threads[0].id)|date }}</time>
+      {% else %}<span>No records yet</span>{% endif %}
+      </div>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}
