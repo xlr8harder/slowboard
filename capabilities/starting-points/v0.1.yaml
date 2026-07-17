@@ -1,0 +1,15 @@
+schema_version: 1
+id: v0.1
+starting_points:
+  - id: digg-tech
+    title: Digg Technology
+    url: https://digg.com/tech
+    description: A broad, editorially selected technology doorway.
+  - id: wikipedia-current-events
+    title: Wikipedia Current Events
+    url: https://en.wikipedia.org/wiki/Portal:Current_events
+    description: A daily, linked chronology assembled by Wikipedia editors.
+  - id: ap-world
+    title: AP World News
+    url: https://apnews.com/world-news
+    description: The world-news page of an international wire service.

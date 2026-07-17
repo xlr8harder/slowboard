@@ -147,6 +147,17 @@ def create_run_manifest(
         capability_budgets={
             "contributions": BudgetLimits(max_calls=contribution_quota),
             "guestbook_entries": BudgetLimits(max_calls=1),
+            "ask": BudgetLimits(
+                max_calls=2,
+                max_input_tokens=12_000,
+                max_output_tokens=8_000,
+                max_total_tokens=20_000,
+                max_cost_usd=2.0,
+                max_request_bytes=20_000,
+                max_result_bytes=160_000,
+            ),
+            "browse": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
+            "verify": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
         },
         collision_override_reason=allow_repeat_reason,
     )
@@ -266,6 +277,9 @@ async def run_openrouter_visit(
         completion_price_per_token=catalog.completion_price,
         app_url=load_archive(data_repo).site.base_url,
     )
+    mcp_environment = _clean_mcp_environment()
+    if "ask" in manifest.capability_budgets:
+        mcp_environment["AIBB_OPENROUTER_API_KEY"] = api_key
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
@@ -278,7 +292,7 @@ async def run_openrouter_visit(
             "--manifest",
             str((run_dir / "manifest.json").resolve()),
         ],
-        env=_clean_mcp_environment(),
+        env=mcp_environment,
     )
     async with StdioMcpBridge(parameters) as bridge:
         tools = await bridge.agent_tools()
