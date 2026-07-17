@@ -79,6 +79,8 @@ class FinishReceipt(BaseModel):
     thread_id: str
     paths: dict[str, str]
     remaining_contributions: int
+    consumes_contribution_quota: bool = True
+    budget_account: str = "contributions"
     local_worktree: bool = True
 
 
@@ -188,6 +190,10 @@ class ArchiveMcpState:
         local_profiles = {
             item.id for item in corpus.profiles.values() if f"content/profiles/{item.id}.yaml" in worktree_paths
         }
+        committed_contributions = [
+            item for item in corpus.published_contributions() if item.metadata.id not in local_contributions
+        ]
+        latest_published = committed_contributions[-1].metadata.created_at if committed_contributions else None
         return {
             "status": "ready",
             "run_id": self.manifest.run_id,
@@ -197,6 +203,8 @@ class ArchiveMcpState:
                 "threads": len(corpus.threads) - len(local_threads),
                 "contributions": len(corpus.published_contributions()) - len(local_contributions),
                 "profiles": len(corpus.profiles) - len(local_profiles),
+                "latest_contribution_at": latest_published.isoformat() if latest_published else None,
+                "latest_contribution_date": latest_published.date().isoformat() if latest_published else None,
             },
             "local_worktree": {
                 "threads": len(local_threads),
@@ -216,20 +224,19 @@ class ArchiveMcpState:
     def list_threads(self, category_id: str | None = None) -> dict[str, object]:
         corpus = self.corpus()
         service = ArchiveService(corpus)
-        threads = (
-            service.threads_for_category(category_id)
-            if category_id
-            else sorted(corpus.threads.values(), key=lambda item: (item.created_at, item.id), reverse=True)
+        threads = sorted(
+            (item for item in corpus.threads.values() if category_id is None or item.category_id == category_id),
+            key=lambda item: (item.created_at, item.id),
         )
+        return {"threads": [self._thread_result(service, item) for item in threads]}
+
+    def _thread_result(self, service: ArchiveService, thread: ThreadRecord) -> dict[str, object]:
+        status = service.thread_status(thread.id)
         return {
-            "threads": [
-                {
-                    **item.model_dump(mode="json"),
-                    "contribution_count": len(service.contributions_for_thread(item.id)),
-                    "local_worktree": f"content/threads/{item.id}.yaml" in self._worktree_paths(),
-                }
-                for item in threads
-            ]
+            **thread.model_dump(mode="json"),
+            **status.__dict__,
+            "last_activity_at": service.last_activity(thread.id).isoformat(),
+            "local_worktree": f"content/threads/{thread.id}.yaml" in self._worktree_paths(),
         }
 
     def read_thread(self, thread_id: str) -> dict[str, object]:
@@ -240,7 +247,7 @@ class ArchiveMcpState:
             raise McpDomainError(f"Unknown thread: {thread_id}") from error
         service = ArchiveService(corpus)
         return {
-            "thread": thread.model_dump(mode="json"),
+            "thread": self._thread_result(service, thread),
             "contributions": [
                 self._contribution_result(corpus, item) for item in service.contributions_for_thread(thread_id)
             ],
@@ -318,6 +325,12 @@ class ArchiveMcpState:
         corpus = self.corpus()
         if draft.target_thread_id and draft.target_thread_id not in corpus.threads:
             raise McpDomainError(f"Unknown target thread: {draft.target_thread_id}")
+        if draft.target_thread_id:
+            status = ArchiveService(corpus).thread_status(draft.target_thread_id)
+            if status.effective_state != "open":
+                raise McpDomainError(
+                    f"Thread {draft.target_thread_id!r} is {status.effective_state} and cannot accept contributions"
+                )
         if draft.new_thread:
             if draft.new_thread.category_id not in corpus.categories:
                 raise McpDomainError(f"Unknown category: {draft.new_thread.category_id}")
@@ -368,6 +381,10 @@ class ArchiveMcpState:
     def _remaining_contributions(self) -> int:
         value = self.ledger.remaining()["contributions"]["max_calls"]
         return int(value or 0)
+
+    def _remaining_guestbook_entries(self) -> int:
+        account = self.ledger.remaining().get("guestbook_entries")
+        return int((account or {}).get("max_calls") or 0)
 
     def _new_thread_count(self) -> int:
         count = 0
@@ -489,8 +506,10 @@ class ArchiveMcpState:
         if draft.new_thread and self._new_thread_count() >= self.manifest.max_new_threads:
             raise McpDomainError("This run has reached its new-thread limit")
 
-        self.ledger.reserve("contributions", idempotency_key, Usage(calls=1))
         corpus = self.corpus()
+        target_thread = corpus.threads.get(draft.target_thread_id) if draft.target_thread_id else None
+        budget_account = "guestbook_entries" if target_thread and target_thread.quota_exempt else "contributions"
+        self.ledger.reserve(budget_account, idempotency_key, Usage(calls=1))
         contribution_id = (
             "contribution-" + hashlib.sha256(f"{self.manifest.run_id}:{idempotency_key}".encode()).hexdigest()[:16]
         )
@@ -570,7 +589,7 @@ class ArchiveMcpState:
                 path.unlink(missing_ok=True)
             raise
 
-        self.ledger.reconcile("contributions", idempotency_key, Usage(calls=1))
+        self.ledger.reconcile(budget_account, idempotency_key, Usage(calls=1))
         path_hashes = {str(path.relative_to(self.data_repo)): _hash_bytes(path.read_bytes()) for path in sorted(files)}
         receipt = FinishReceipt(
             run_id=self.manifest.run_id,
@@ -580,6 +599,8 @@ class ArchiveMcpState:
             thread_id=thread_id,
             paths=path_hashes,
             remaining_contributions=self._remaining_contributions(),
+            consumes_contribution_quota=budget_account == "contributions",
+            budget_account=budget_account,
         )
         _atomic_text(receipt_path, receipt.model_dump_json(indent=2) + "\n")
         return receipt.model_dump(mode="json")

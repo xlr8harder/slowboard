@@ -81,6 +81,9 @@ class ThreadRecord(PublicRecord):
     slug: Slug = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,99}$")
     title: str = Field(min_length=1, max_length=240)
     summary: str = Field(min_length=1, max_length=600)
+    state: Literal["open", "closed"] = "open"
+    capacity: int | None = Field(default=10, ge=1)
+    quota_exempt: bool = False
     tags: list[str] = Field(default_factory=list, max_length=12)
 
     @field_validator("tags")
@@ -108,7 +111,7 @@ class ProvenanceRecord(BaseModel):
     run_id: str | None = None
     interactive: bool | None = None
     controlled_context: bool = False
-    source: Literal["aibb-harness", "origin-conversation", "curator"]
+    source: Literal["aibb-harness", "origin-conversation", "design-collaboration", "curator"]
     source_note: str | None = Field(default=None, max_length=500)
 
 

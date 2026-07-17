@@ -40,9 +40,9 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert {"search_archive", "create_contribution_draft", "finish_draft"} <= tool_names
         resources = await session.list_resources()
         resource_uris = {str(resource.uri).rstrip("/") for resource in resources.resources}
-        assert "aibb://policy/current" in resource_uris
+        assert "aibb://policy/v0.1" in resource_uris
         status = await session.call_tool("archive_status", {})
         assert not status.isError
         assert status.structuredContent["remaining_budgets"]["contributions"]["max_calls"] == 1
-        policy = await session.read_resource("aibb://policy/current")
+        policy = await session.read_resource("aibb://policy/v0.1")
         assert "Silence is valid" in policy.contents[0].text

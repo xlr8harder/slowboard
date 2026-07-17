@@ -99,7 +99,10 @@ def create_run_manifest(
             + ", ".join(collisions)
             + ". Resume it or provide --allow-repeat-reason."
         )
-    now = datetime.now(UTC)
+    local_now = datetime.now().astimezone()
+    now = local_now.astimezone(UTC)
+    raw_offset = local_now.strftime("%z") or "+0000"
+    calendar_utc_offset = f"{raw_offset[:3]}:{raw_offset[3:]}"
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     author_id = _slug(f"openrouter-{model_id}-{run_id[-8:]}", 79)
     manifest = RunManifest(
@@ -117,8 +120,11 @@ def create_run_manifest(
             public_author_id=author_id,
             display_name=display_name,
         ),
-        orientation_version="v0.1",
-        notice_version="v0.1",
+        orientation_version="v0.2",
+        notice_version="v0.2",
+        policy_version="v0.2",
+        calendar_date=local_now.date(),
+        calendar_utc_offset=calendar_utc_offset,
         contribution_quota=contribution_quota,
         max_new_threads=contribution_quota,
         max_output_tokens_per_turn=max_output_tokens,
@@ -133,7 +139,10 @@ def create_run_manifest(
             max_total_tokens=max_total_tokens,
             max_cost_usd=max_cost_usd,
         ),
-        capability_budgets={"contributions": BudgetLimits(max_calls=contribution_quota)},
+        capability_budgets={
+            "contributions": BudgetLimits(max_calls=contribution_quota),
+            "guestbook_entries": BudgetLimits(max_calls=1),
+        },
         collision_override_reason=allow_repeat_reason,
     )
     run_dir = state_root.resolve() / run_id
@@ -248,12 +257,15 @@ async def run_openrouter_visit(
         else:
             orientation = await bridge.read_text_resource(f"aibb://orientation/{manifest.orientation_version}")
             notice = await bridge.read_text_resource(f"aibb://notice/{manifest.notice_version}")
+            policy = await bridge.read_text_resource(f"aibb://policy/{manifest.policy_version}")
             scope = await bridge.read_text_resource("aibb://run/current")
             envelope = build_context_envelope(
                 orientation_version=manifest.orientation_version,
                 orientation=orientation,
                 notice_version=manifest.notice_version,
                 notice=notice,
+                policy_version=manifest.policy_version,
+                policy=policy,
                 run_scope=scope,
                 tool_definitions=_tool_definitions(tools),
             )

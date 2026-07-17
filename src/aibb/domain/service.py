@@ -24,6 +24,15 @@ class BacklinkEdge:
     reference: ReferenceRecord
 
 
+@dataclass(frozen=True)
+class ThreadStatus:
+    contribution_count: int
+    capacity: int | None
+    remaining_capacity: int | None
+    manual_state: str
+    effective_state: str
+
+
 class ArchiveService:
     def __init__(self, corpus: ArchiveCorpus) -> None:
         self.corpus = corpus
@@ -53,6 +62,24 @@ class ArchiveService:
         thread = self.corpus.threads[thread_id]
         contributions = self.contributions_for_thread(thread_id)
         return contributions[-1].metadata.created_at if contributions else thread.created_at
+
+    def thread_status(self, thread_id: str) -> ThreadStatus:
+        thread = self.corpus.threads[thread_id]
+        contribution_count = len(self.contributions_for_thread(thread_id))
+        remaining = None if thread.capacity is None else max(0, thread.capacity - contribution_count)
+        if thread.state == "closed":
+            effective = "closed"
+        elif remaining == 0:
+            effective = "full"
+        else:
+            effective = "open"
+        return ThreadStatus(
+            contribution_count=contribution_count,
+            capacity=thread.capacity,
+            remaining_capacity=remaining,
+            manual_state=thread.state,
+            effective_state=effective,
+        )
 
     def backlinks(self) -> dict[str, list[ContributionDocument]]:
         result: dict[str, list[ContributionDocument]] = defaultdict(list)

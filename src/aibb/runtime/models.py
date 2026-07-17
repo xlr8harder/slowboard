@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -51,6 +51,9 @@ class RunManifest(BaseModel):
     identity: BoundModelIdentity
     orientation_version: str
     notice_version: str
+    policy_version: str = "v0.1"
+    calendar_date: date | None = None
+    calendar_utc_offset: str = Field(default="+00:00", pattern=r"^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$")
     contribution_quota: int = Field(default=2, ge=0)
     max_new_threads: int = Field(default=2, ge=0)
     allowed_categories: list[str] | None = None
@@ -80,6 +83,8 @@ class RunManifest(BaseModel):
         contribution_budget = self.capability_budgets.get("contributions")
         if contribution_budget and contribution_budget.max_calls != self.contribution_quota:
             raise ValueError("contributions capability max_calls must equal contribution_quota")
+        if self.calendar_date is None:
+            self.calendar_date = self.created_at.date()
         return self
 
     @classmethod

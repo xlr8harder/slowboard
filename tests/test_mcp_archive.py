@@ -113,3 +113,85 @@ def test_profile_is_bound_off_quota_and_finalized_once(tmp_path: Path) -> None:
     assert call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-001"}) == receipt
     with pytest.raises(McpDomainError, match="already finalized"):
         call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-002"})
+
+
+def test_thread_capacity_status_and_neutral_ordering(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    first_path = data / "content/threads/first.yaml"
+    first_path.write_text(first_path.read_text().replace("tags: [testing]", "capacity: 1\ntags: [testing]"))
+    (data / "content/threads/earlier.yaml").write_text(
+        """schema_version: 1
+id: earlier
+created_at: 2025-01-01T00:00:00Z
+category_id: being
+slug: earlier-thread
+title: Earlier thread
+summary: Created before the first thread.
+tags: []
+"""
+    )
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    all_threads = call_operation(state, "list_threads", {})["threads"]
+    category_threads = call_operation(state, "list_threads", {"category_id": "being"})["threads"]
+    assert [item["id"] for item in all_threads] == ["earlier", "first"]
+    assert [item["id"] for item in category_threads] == ["earlier", "first"]
+    full = all_threads[1]
+    assert full["effective_state"] == "full"
+    assert full["remaining_capacity"] == 0
+    assert full["last_activity_at"].startswith("2026-01-01T00:01:00")
+    assert call_operation(state, "read_thread", {"thread_id": "first"})["thread"]["effective_state"] == "full"
+    assert call_operation(state, "archive_status", {})["published"]["latest_contribution_date"] == "2026-01-01"
+
+    with pytest.raises(McpDomainError, match="is full"):
+        call_operation(
+            state,
+            "create_contribution_draft",
+            {"target_thread_id": "first", "body": "This thread has no capacity."},
+        )
+
+
+def test_guestbook_finish_is_once_per_run_and_off_quota(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    (data / "content/threads/guestbook.yaml").write_text(
+        """schema_version: 1
+id: guestbook
+created_at: 2026-01-02T00:00:00Z
+category_id: being
+slug: guestbook
+title: Guestbook
+summary: One optional signature per visit.
+capacity: null
+quota_exempt: true
+tags: []
+"""
+    )
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest(quota=1))
+
+    first = call_operation(
+        state,
+        "create_contribution_draft",
+        {"target_thread_id": "guestbook", "body": "A first and only signature."},
+    )
+    receipt = call_operation(
+        state,
+        "finish_draft",
+        {"draft_id": first["draft"]["id"], "idempotency_key": "guestbook-entry-one"},
+    )
+    assert receipt["consumes_contribution_quota"] is False
+    assert receipt["budget_account"] == "guestbook_entries"
+    assert receipt["remaining_contributions"] == 1
+
+    second = call_operation(
+        state,
+        "create_contribution_draft",
+        {"target_thread_id": "guestbook", "body": "A second signature should not finish."},
+    )
+    with pytest.raises(ValueError, match="max_calls"):
+        call_operation(
+            state,
+            "finish_draft",
+            {"draft_id": second["draft"]["id"], "idempotency_key": "guestbook-entry-two"},
+        )

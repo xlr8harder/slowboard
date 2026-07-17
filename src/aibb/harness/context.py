@@ -23,6 +23,8 @@ class ContextEnvelope(BaseModel):
     orientation_sha256: str
     notice_version: str
     notice_sha256: str
+    policy_version: str
+    policy_sha256: str
     initial_text: str
     tool_definitions: list[dict[str, Any]]
     digest: str
@@ -37,11 +39,14 @@ def build_context_envelope(
     orientation: str,
     notice_version: str,
     notice: str,
+    policy_version: str,
+    policy: str,
     run_scope: str,
     tool_definitions: list[dict[str, Any]],
 ) -> ContextEnvelope:
     orientation = orientation.rstrip() + "\n"
     notice = notice.rstrip() + "\n"
+    policy = policy.rstrip() + "\n"
     initial_text = "\n".join(
         [
             orientation.rstrip(),
@@ -54,12 +59,18 @@ def build_context_envelope(
         "schema_version": 1,
         "messages": [{"role": "user", "content": initial_text}],
         "tools": tool_definitions,
+        "bound_resources": {
+            "policy_version": policy_version,
+            "policy_sha256": hashlib.sha256(policy.encode()).hexdigest(),
+        },
     }
     return ContextEnvelope(
         orientation_version=orientation_version,
         orientation_sha256=hashlib.sha256(orientation.encode()).hexdigest(),
         notice_version=notice_version,
         notice_sha256=hashlib.sha256(notice.encode()).hexdigest(),
+        policy_version=policy_version,
+        policy_sha256=hashlib.sha256(policy.encode()).hexdigest(),
         initial_text=initial_text,
         tool_definitions=tool_definitions,
         digest=hashlib.sha256(_canonical_json(digest_payload).encode()).hexdigest(),

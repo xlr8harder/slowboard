@@ -29,6 +29,7 @@ def make_manifest(*, quota: int = 1) -> RunManifest:
         ),
         orientation_version="v0.1",
         notice_version="v0.1",
+        policy_version="v0.1",
         contribution_quota=quota,
         max_new_threads=quota,
         inference_budget=BudgetLimits(
@@ -40,6 +41,7 @@ def make_manifest(*, quota: int = 1) -> RunManifest:
         ),
         capability_budgets={
             "contributions": BudgetLimits(max_calls=quota),
+            "guestbook_entries": BudgetLimits(max_calls=1),
             "web_search": BudgetLimits(max_calls=1, max_result_bytes=20_000),
         },
     )

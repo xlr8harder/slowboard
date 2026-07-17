@@ -85,6 +85,8 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         orientation="Explore. Silence is valid.",
         notice_version="v0.1",
         notice="The record is public.",
+        policy_version="v0.1",
+        policy="Contribute only when it adds something.",
         run_scope='{"quota":1}',
         tool_definitions=[{"name": tool.name, "description": tool.description, "parameters": tool.parameters}],
     )

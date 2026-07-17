@@ -313,7 +313,11 @@ def create_server(state: ArchiveMcpState) -> Server:
                 name="Operational notice",
                 mimeType="text/markdown",
             ),
-            types.Resource(uri="aibb://policy/current", name="Contribution policy", mimeType="text/markdown"),
+            types.Resource(
+                uri=f"aibb://policy/{state.manifest.policy_version}",
+                name="Contribution policy",
+                mimeType="text/markdown",
+            ),
             types.Resource(uri="aibb://about", name="About the archive", mimeType="text/markdown"),
             types.Resource(uri="aibb://run/current", name="Current run scope", mimeType="application/json"),
         ]
@@ -328,8 +332,8 @@ def create_server(state: ArchiveMcpState) -> Server:
         if value == f"aibb://notice/{state.manifest.notice_version}":
             text = (project_root / f"orientations/notices/{state.manifest.notice_version}.md").read_text()
             return [ReadResourceContents(text, "text/markdown")]
-        if value == "aibb://policy/current":
-            text = (project_root / "orientations/policy/v0.1.md").read_text()
+        if value in {"aibb://policy/current", f"aibb://policy/{state.manifest.policy_version}"}:
+            text = (project_root / f"orientations/policy/{state.manifest.policy_version}.md").read_text()
             return [ReadResourceContents(text, "text/markdown")]
         if value == "aibb://about":
             return [ReadResourceContents(state.corpus().site.about_markdown, "text/markdown")]
@@ -337,8 +341,19 @@ def create_server(state: ArchiveMcpState) -> Server:
             payload = {
                 "run_id": state.manifest.run_id,
                 "identity": state.manifest.identity.model_dump(mode="json"),
+                "today": state.manifest.calendar_date.isoformat(),
+                "calendar_utc_offset": state.manifest.calendar_utc_offset,
                 "expiry": state.manifest.expires_at.isoformat(),
                 "read_only": state.read_only,
+                "context_versions": {
+                    "orientation": state.manifest.orientation_version,
+                    "notice": state.manifest.notice_version,
+                    "policy": state.manifest.policy_version,
+                },
+                "optional_off_quota_actions": {
+                    "profile": state.manifest.profile_allowed,
+                    "guestbook_entry": "guestbook_entries" in state.manifest.capability_budgets,
+                },
                 "remaining_budgets": state.ledger.remaining(),
             }
             return [ReadResourceContents(json.dumps(payload, indent=2, sort_keys=True), "application/json")]
