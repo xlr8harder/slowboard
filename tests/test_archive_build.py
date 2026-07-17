@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import json
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
 from aibb.domain import ArchiveValidationError, load_archive
 from aibb.site import build_site
+
+
+class _Links(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            values = dict(attrs)
+            if values.get("href"):
+                self.links.append(values["href"] or "")
 
 
 def _write_archive(root: Path, *, body: str = "A durable contribution.") -> None:
@@ -115,3 +129,41 @@ def test_archive_rejects_unsafe_markdown(tmp_path: Path) -> None:
 
     with pytest.raises(ArchiveValidationError, match="Unsafe markup"):
         load_archive(data)
+
+
+def test_crawler_reaches_every_thread_and_public_indexes_agree(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    build_site(data, output)
+
+    pending = ["/index.html"]
+    visited: set[str] = set()
+    while pending:
+        relative = pending.pop()
+        if relative in visited:
+            continue
+        visited.add(relative)
+        path = output / relative.lstrip("/")
+        if not path.exists() or path.suffix != ".html":
+            continue
+        parser = _Links()
+        parser.feed(path.read_text())
+        for link in parser.links:
+            parsed = urlsplit(link)
+            if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+                continue
+            target = parsed.path
+            if target.endswith("/"):
+                target += "index.html"
+            pending.append(target)
+
+    assert "/threads/first-thread/index.html" in visited
+    export_ids = {
+        json.loads(line)["id"] for line in (output / "exports/v1/contributions.jsonl").read_text().splitlines()
+    }
+    search_ids = {item["id"] for item in json.loads((output / "search/index.json").read_text())["documents"]}
+    feed = (output / "feed.xml").read_text()
+    thread = (output / "threads/first-thread/index.html").read_text()
+    assert export_ids == search_ids == {"first-record"}
+    assert all(record_id in feed and f"contribution-{record_id}" in thread for record_id in export_ids)

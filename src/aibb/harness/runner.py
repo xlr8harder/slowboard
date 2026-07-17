@@ -161,6 +161,26 @@ def _record_agent_event(store: SessionStore, event: Any) -> None:
     store.append("agent_event", payload, "private_provider")
 
 
+async def _terminal_readline(prompt: str) -> str:
+    """Read cancellably from a POSIX terminal without leaving a blocked worker thread."""
+
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[str] = loop.create_future()
+    descriptor = sys.stdin.fileno()
+
+    def readable() -> None:
+        line = sys.stdin.readline()
+        if not future.done():
+            future.set_result(line.rstrip("\n"))
+
+    print(prompt, end="", flush=True)
+    loop.add_reader(descriptor, readable)
+    try:
+        return await future
+    finally:
+        loop.remove_reader(descriptor)
+
+
 async def run_openrouter_visit(
     *,
     data_repo: Path,
@@ -255,13 +275,37 @@ async def run_openrouter_visit(
         console.print(f"Context: {context_digest}")
         console.print(f"Remaining: {ledger.remaining()}")
 
-        async def send(text: str | None) -> None:
+        async def send(text: str | None, *, allow_queued_input: bool = False) -> None:
             if text is None:
                 store.append("context_only_begin", {}, "operator")
-                await engine.begin()
+                run_task = asyncio.create_task(engine.begin())
             else:
                 store.append("curator_message", {"text": text}, "model")
-                await engine.send_curator_message(text)
+                run_task = asyncio.create_task(engine.send_curator_message(text))
+            while allow_queued_input and sys.stdin.isatty() and not run_task.done():
+                input_task = asyncio.create_task(_terminal_readline("curator (queued)> "))
+                done, _pending = await asyncio.wait({run_task, input_task}, return_when=asyncio.FIRST_COMPLETED)
+                if run_task in done:
+                    input_task.cancel()
+                    await asyncio.gather(input_task, return_exceptions=True)
+                    break
+                queued = input_task.result()
+                if queued == ":status":
+                    console.print(ledger.remaining())
+                elif queued == ":abort":
+                    store.append("run_abort_requested", {}, "operator")
+                    engine.agent.abort()
+                elif queued.startswith(":"):
+                    console.print("During a response, use :status, :abort, or type a curator message to queue it.")
+                elif queued.strip():
+                    store.append(
+                        "curator_message_queued",
+                        {"text": queued, "delivery": "next_safe_model_turn"},
+                        "model",
+                    )
+                    engine.steer(queued)
+                    console.print("Queued for the next safe model-turn boundary.")
+            await run_task
             store.append("engine_snapshot", {"engine": engine.snapshot().model_dump(mode="json")}, "private_provider")
             store.write_checkpoint(engine.snapshot())
             response_text = _assistant_text(engine)
@@ -270,7 +314,7 @@ async def run_openrouter_visit(
                 console.print(response_text)
 
         if opening is not None or manifest.mode == "headless":
-            await send(opening)
+            await send(opening, allow_queued_input=False)
             if once or manifest.mode == "headless":
                 store.append("run_suspended", {"reason": "single-turn boundary"}, "operator")
                 store.write_checkpoint(engine.snapshot())
@@ -278,9 +322,9 @@ async def run_openrouter_visit(
 
         console.print("Commands: :begin, :status, :suspend, :complete. Other text is sent as a curator message.")
         while True:
-            line = await asyncio.to_thread(input, "curator> ")
+            line = await _terminal_readline("curator> ")
             if line == ":begin":
-                await send(None)
+                await send(None, allow_queued_input=True)
             elif line == ":status":
                 console.print(ledger.remaining())
             elif line == ":suspend":
@@ -294,4 +338,4 @@ async def run_openrouter_visit(
             elif line.startswith(":"):
                 console.print("Unknown local command")
             elif line.strip():
-                await send(line)
+                await send(line, allow_queued_input=True)
