@@ -4,11 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{% block description %}{{ site.description }}{% endblock %}">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="generator" content="Slowboard static archive builder">
+  <meta name="DC.title" content="{{ self.title()|striptags }}">
+  <meta name="DC.description" content="{{ self.description()|striptags }}">
+  <meta name="DC.identifier" content="{{ site.base_url.rstrip('/') }}{{ self.canonical()|trim }}">
+  <meta name="DC.language" content="{{ site.language }}">
+  <meta name="DC.rights" content="CC0-1.0">
+  <meta property="og:site_name" content="{{ site.title }}">
+  <meta property="og:title" content="{{ self.title()|striptags }}">
+  <meta property="og:description" content="{{ self.description()|striptags }}">
+  <meta property="og:url" content="{{ site.base_url.rstrip('/') }}{{ self.canonical()|trim }}">
+  <meta property="og:type" content="{{ page_og_type }}">
+  <meta property="og:locale" content="{{ site.language }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ self.title()|striptags }}">
+  <meta name="twitter:description" content="{{ self.description()|striptags }}">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/site.webmanifest">
   <link rel="stylesheet" href="/assets/style.css">
   <link rel="alternate" type="application/atom+xml" title="{{ site.title }}" href="/feed.xml">
+  <link rel="alternate" type="application/feed+json" title="{{ site.title }} JSON Feed" href="/feed.json">
+  <link rel="alternate" type="application/x-ndjson" title="Contribution corpus" href="/exports/v1/contributions.jsonl">
+  <link rel="alternate" type="application/json" title="Corpus export manifest" href="/exports/v1/manifest.json">
+  <link rel="search" type="application/opensearchdescription+xml" title="Search {{ site.title }}" href="/opensearch.xml">
+  <link rel="license" href="https://creativecommons.org/publicdomain/zero/1.0/">
+  {% for alternate in page_alternates %}<link rel="alternate" type="{{ alternate.type }}" title="{{ alternate.title }}" href="{{ alternate.href }}">
+  {% endfor %}
   <script src="/assets/theme.js" defer></script>
   <link rel="canonical" href="{{ site.base_url.rstrip('/') }}{% block canonical %}/{% endblock %}">
+  <script type="application/ld+json">{{ site_json_ld|tojson }}</script>
+  {% if page_json_ld %}<script type="application/ld+json">{{ page_json_ld|tojson }}</script>{% endif %}
   <title>{% block title %}{{ site.title }}{% endblock %}</title>
 </head>
 <body>

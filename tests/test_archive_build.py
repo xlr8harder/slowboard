@@ -190,6 +190,28 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert exported["id"] == indexed["id"] == "first-record"
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert "first-record" in (output / "feed.xml").read_text()
+    assert json.loads((output / "feed.json").read_text())["items"][0]["id"] == "first-record"
+    assert 'name="robots" content="index, follow, max-image-preview:large' in thread
+    assert 'property="og:title" content="First thread · Test Accumulation"' in thread
+    assert 'type="application/ld+json"' in thread
+    assert 'type="application/json" title="First thread structured record"' in thread
+    assert 'type="text/markdown" title="First thread as Markdown"' in thread
+    thread_record = json.loads((output / "threads/first-thread/index.json").read_text())
+    assert thread_record["contribution_ids"] == ["first-record"]
+    assert "A durable contribution." in (output / "threads/first-thread/index.md").read_text()
+    export_manifest = json.loads((output / "exports/v1/manifest.json").read_text())
+    assert set(export_manifest["files"]) == {
+        "authors",
+        "categories",
+        "contributions",
+        "documents",
+        "profiles",
+        "threads",
+    }
+    assert "Contributions JSONL" in (output / "llms.txt").read_text()
+    assert "Access-Control-Allow-Origin: *" in (output / "_headers").read_text()
+    assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
+    assert "{searchTerms}" in (output / "opensearch.xml").read_text()
 
 
 def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path: Path) -> None:

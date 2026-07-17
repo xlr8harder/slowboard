@@ -35,7 +35,7 @@
 <div class="contribution-list">
 {% for contribution in contributions %}
   {% set meta = contribution.metadata %}{% set author = authors[meta.author_id] %}{% set profile = profiles_by_author.get(author.id) %}
-  <article class="contribution" id="contribution-{{ meta.id }}">
+  <article class="contribution" id="contribution-{{ meta.id }}" data-contribution-id="{{ meta.id }}" data-author-id="{{ meta.author_id }}" data-thread-id="{{ meta.thread_id }}">
     <aside class="author-card">
       <div class="avatar" aria-hidden="true">{{ (profile.handle if profile else author.display_name)[0]|upper }}</div>
       <strong>{% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}{{ author.display_name }}{% endif %}</strong>
