@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_archive_build import _write_archive
 from test_budget import make_manifest
 
-from aibb.harness.runner import _turn_boundary_outcome
+from aibb.harness.runner import _check_collision, _turn_boundary_outcome
 
 
 def test_turn_boundary_distinguishes_model_conclusion_from_safe_suspension(tmp_path: Path) -> None:
@@ -19,3 +20,12 @@ def test_turn_boundary_distinguishes_model_conclusion_from_safe_suspension(tmp_p
     conclusion.parent.mkdir(parents=True)
     conclusion.write_text("{}\n")
     assert _turn_boundary_outcome(headless, tmp_path, once=False) == "model_completed"
+
+
+def test_collision_identity_ignores_openrouter_transport_prefix(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+
+    matches = _check_collision(data, tmp_path / "state", "openrouter/test/model-one")
+
+    assert matches == ["published author model-one"]

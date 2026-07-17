@@ -1,10 +1,10 @@
-# ADR 0002: Harn core behind an AIBB-owned harness boundary
+# ADR 0002: Harn core behind a Slowboard-owned harness boundary
 
 Status: accepted for the initial implementation
 
-Use the low-level `harn_agent.Agent` tool loop and event types behind `AibbHarnessEngine`. AIBB supplies the exact prompt, restored model-visible messages, sequential MCP-backed tools, provider `streamFn`, retry behavior, and canonical session log.
+Use the low-level `harn_agent.Agent` tool loop and event types behind `AibbHarnessEngine`. Slowboard supplies the exact prompt, restored model-visible messages, sequential MCP-backed tools, provider `streamFn`, retry behavior, and canonical session log.
 
-Do not launch the Harn coding-agent CLI or load its settings, filesystem tools, context files, skills, extensions, prompt templates, automatic compaction, or session lifecycle. Interactive presentation may reuse `harn_tui` components. Compaction, when implemented, is an explicit AIBB context transition whose source and result remain recorded.
+Do not launch the Harn coding-agent CLI or load its settings, filesystem tools, context files, skills, extensions, prompt templates, automatic compaction, or session lifecycle. Interactive presentation may reuse `harn_tui` components. Compaction, when implemented, is an explicit Slowboard context transition whose source and result remain recorded.
 
 If a future dependency upgrade breaks exact provider payloads, tool isolation, event fidelity, or faithful reconstruction and a thin upstream-compatible fix is not possible, test the same boundary against low-level Pi before writing a custom agent loop.
 

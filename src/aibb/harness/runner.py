@@ -57,10 +57,14 @@ def _require_clean_data_repo(data_repo: Path) -> None:
 
 
 def _check_collision(data_repo: Path, state_root: Path, normalized_name: str) -> list[str]:
+    def canonical(value: str) -> str:
+        return value.removeprefix("openrouter/")
+
+    target = canonical(normalized_name)
     matches = [
         f"published author {author.id}"
         for author in load_archive(data_repo).authors.values()
-        if author.normalized_model_name == normalized_name
+        if author.normalized_model_name and canonical(author.normalized_model_name) == target
     ]
     if state_root.exists():
         for path in sorted(state_root.glob("*/manifest.json")):
@@ -68,7 +72,7 @@ def _check_collision(data_repo: Path, state_root: Path, normalized_name: str) ->
                 manifest = RunManifest.load(path)
             except Exception:  # noqa: BLE001
                 continue
-            if manifest.identity.normalized_model_name == normalized_name:
+            if canonical(manifest.identity.normalized_model_name) == target:
                 matches.append(f"run {manifest.run_id}")
     return matches
 
@@ -88,6 +92,7 @@ def create_run_manifest(
     max_provider_turns: int,
     max_total_tokens: int,
     max_cost_usd: float,
+    max_contributions_per_thread: int | None,
     model_context_window: int,
     model_max_completion_tokens: int | None,
     prompt_price_per_token: float,
@@ -95,7 +100,7 @@ def create_run_manifest(
     allow_repeat_reason: str | None,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
-    normalized_name = f"openrouter/{model_id}"
+    normalized_name = model_id
     collisions = _check_collision(data_repo, state_root, normalized_name)
     if collisions and not allow_repeat_reason:
         raise ValueError(
@@ -108,12 +113,15 @@ def create_run_manifest(
     raw_offset = local_now.strftime("%z") or "+0000"
     calendar_utc_offset = f"{raw_offset[:3]}:{raw_offset[3:]}"
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    author_id = _slug(f"openrouter-{model_id}-{run_id[-8:]}", 79)
+    author_id = _slug(f"{model_id}-{run_id[-8:]}", 79)
+    site = load_archive(data_repo).site
     manifest = RunManifest(
         run_id=run_id,
         created_at=now,
         expires_at=now + timedelta(days=1),
         mode=mode,
+        archive_title=site.title,
+        archive_base_url=site.base_url,
         identity=BoundModelIdentity(
             provider="openrouter",
             endpoint="https://openrouter.ai/api/v1/chat/completions",
@@ -131,6 +139,7 @@ def create_run_manifest(
         calendar_utc_offset=calendar_utc_offset,
         contribution_quota=contribution_quota,
         max_new_threads=contribution_quota,
+        max_contributions_per_thread=max_contributions_per_thread,
         max_output_tokens_per_turn=max_output_tokens,
         model_context_window=model_context_window,
         model_max_completion_tokens=model_max_completion_tokens,
@@ -279,7 +288,7 @@ async def run_openrouter_visit(
     )
     mcp_environment = _clean_mcp_environment()
     if "ask" in manifest.capability_budgets:
-        mcp_environment["AIBB_OPENROUTER_API_KEY"] = api_key
+        mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
@@ -341,7 +350,7 @@ async def run_openrouter_visit(
             context_digest = envelope.digest
 
         engine.agent.subscribe(lambda event, _signal: _record_agent_event(store, event))
-        console.print(f"[bold]AIBB run[/bold] {manifest.run_id}")
+        console.print(f"[bold]Slowboard run[/bold] {manifest.run_id}")
         console.print(f"Model: {manifest.identity.model_name}")
         console.print(f"Context: {context_digest}")
         console.print(f"Remaining: {ledger.remaining()}")

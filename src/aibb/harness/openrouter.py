@@ -235,7 +235,7 @@ class OpenRouterAdapter:
                         "Authorization": f"Bearer {self._api_key}",
                         "Content-Type": "application/json",
                         "HTTP-Referer": self.app_url,
-                        "X-Title": "AIBB controlled harness",
+                        "X-Title": "Slowboard controlled harness",
                     },
                     json=payload,
                 )

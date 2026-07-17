@@ -90,6 +90,15 @@ def _utf8_prefix(value: str, max_bytes: int) -> str:
     return value if len(encoded) <= max_bytes else encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
+def _utf8_slice(value: str, offset_bytes: int, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    if offset_bytes > len(encoded):
+        raise WorldCapabilityError(
+            f"content offset {offset_bytes} is beyond the {len(encoded)} extracted bytes available"
+        )
+    return encoded[offset_bytes : offset_bytes + max_bytes].decode("utf-8", errors="ignore")
+
+
 def _fit_result_content(result: dict[str, object], max_bytes: int) -> int:
     if len(_canonical_json(result).encode("utf-8")) <= max_bytes:
         return len(_canonical_json(result).encode("utf-8"))
@@ -240,15 +249,17 @@ class WorldCapabilityState:
             {"type": "ask_requested", "reservation_key": key, "query": query, "model": ASK_MODEL}
         )
         try:
+            headers = {
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "X-Title": f"{self.manifest.archive_title or 'Archive'} world research capability",
+            }
+            if self.manifest.archive_base_url:
+                headers["HTTP-Referer"] = self.manifest.archive_base_url
             async with httpx.AsyncClient(timeout=180, transport=self.transport) as client:
                 response = await client.post(
                     ASK_ENDPOINT,
-                    headers={
-                        "Authorization": f"Bearer {self.openrouter_api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://aibb.example.com/",
-                        "X-Title": "AIBB world research capability",
-                    },
+                    headers=headers,
                     json=payload,
                 )
             response.raise_for_status()
@@ -320,7 +331,7 @@ class WorldCapabilityState:
             )
             raise
 
-    async def browse(self, starting_point_id: str) -> dict[str, object]:
+    async def browse(self, starting_point_id: str, offset_bytes: int = 0) -> dict[str, object]:
         if "browse" not in self.enabled:
             raise WorldCapabilityError("browse is not enabled for this run")
         try:
@@ -328,7 +339,7 @@ class WorldCapabilityState:
         except StopIteration as error:
             choices = ", ".join(item.id for item in self.starting_points.starting_points)
             raise WorldCapabilityError(f"unknown starting point; choose one of: {choices}") from error
-        result = await self._fetch("browse", point.url)
+        result = await self._fetch("browse", point.url, content_offset=offset_bytes)
         return {
             "starting_points_version": self.starting_points.id,
             "starting_point": point.model_dump(mode="json"),
@@ -340,7 +351,7 @@ class WorldCapabilityState:
             raise WorldCapabilityError("verify is not enabled for this run")
         return await self._fetch("verify", url)
 
-    async def _fetch(self, capability: str, url: str) -> dict[str, object]:
+    async def _fetch(self, capability: str, url: str, *, content_offset: int = 0) -> dict[str, object]:
         current = validate_public_url(url, resolver=self.resolver)
         key, requested = self._reserve(capability, request_bytes=len(current.encode("utf-8")))
         self._append_log({"type": f"{capability}_requested", "reservation_key": key, "url": current})
@@ -348,8 +359,9 @@ class WorldCapabilityState:
             redirects: list[str] = []
             async with httpx.AsyncClient(timeout=30, transport=self.transport, follow_redirects=False) as client:
                 for _ in range(6):
+                    user_agent_title = (self.manifest.archive_title or "Archive").replace(" ", "-")
                     async with client.stream(
-                        "GET", current, headers={"User-Agent": "AIBB/0.1 archive research fetch"}
+                        "GET", current, headers={"User-Agent": f"{user_agent_title}/0.1 research fetch"}
                     ) as response:
                         if response.is_redirect:
                             location = response.headers.get("location")
@@ -390,8 +402,11 @@ class WorldCapabilityState:
                         else:
                             text = decoded
                             content_format = "raw_text"
-                        result_truncated = remote_truncated or len(text.encode("utf-8")) > content_ceiling
-                        text = _utf8_prefix(text, content_ceiling)
+                        available_content_bytes = len(text.encode("utf-8"))
+                        text = _utf8_slice(text, content_offset, content_ceiling)
+                        returned_content_bytes = len(text.encode("utf-8"))
+                        next_offset = content_offset + returned_content_bytes
+                        has_more_extracted = next_offset < available_content_bytes
                         result = {
                             "kind": "untrusted_remote_content",
                             "requested_url": url,
@@ -400,9 +415,21 @@ class WorldCapabilityState:
                             "content_type": content_type,
                             "content_format": content_format,
                             "content_sha256": hashlib.sha256(raw).hexdigest(),
-                            "truncated": result_truncated,
+                            "content_offset_bytes": content_offset,
+                            "available_content_bytes": available_content_bytes,
+                            "returned_content_bytes": returned_content_bytes,
+                            "remote_download_truncated": remote_truncated,
+                            "truncated": remote_truncated or has_more_extracted,
+                            "next_offset_bytes": next_offset if has_more_extracted else None,
                             "content": text,
                         }
+                        result_bytes = _fit_result_content(result, requested.result_bytes)
+                        returned_content_bytes = len(str(result["content"]).encode("utf-8"))
+                        next_offset = content_offset + returned_content_bytes
+                        has_more_extracted = next_offset < available_content_bytes
+                        result["returned_content_bytes"] = returned_content_bytes
+                        result["truncated"] = remote_truncated or has_more_extracted
+                        result["next_offset_bytes"] = next_offset if has_more_extracted else None
                         result_bytes = _fit_result_content(result, requested.result_bytes)
                         self.ledger.reconcile(
                             capability,

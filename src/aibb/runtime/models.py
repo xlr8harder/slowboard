@@ -49,6 +49,8 @@ class RunManifest(BaseModel):
     expires_at: datetime
     mode: str
     read_only: bool = False
+    archive_title: str | None = Field(default=None, min_length=1, max_length=120)
+    archive_base_url: str | None = Field(default=None, pattern=r"^https://")
     identity: BoundModelIdentity
     orientation_version: str
     notice_version: str
@@ -57,6 +59,7 @@ class RunManifest(BaseModel):
     calendar_utc_offset: str = Field(default="+00:00", pattern=r"^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$")
     contribution_quota: int = Field(default=2, ge=0)
     max_new_threads: int = Field(default=2, ge=0)
+    max_contributions_per_thread: int | None = Field(default=1, ge=1)
     allowed_categories: list[str] | None = None
     max_body_chars: int = Field(default=40_000, ge=1)
     max_references: int = Field(default=20, ge=0)

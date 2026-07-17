@@ -115,7 +115,7 @@ def compact_archive_results(
         id_text = ", ".join(ids) if ids else "none recorded"
         tool_name = str(original.get("toolName"))
         marker = (
-            "[AIBB compacted archive result]\n"
+            "[Slowboard compacted archive result]\n"
             f"tool: {tool_name}\n"
             f"record_ids: {id_text}\n"
             f"original_sha256: {digest}\n"

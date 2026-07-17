@@ -1,4 +1,4 @@
-"""Operator command line for AIBB."""
+"""Operator command line for Slowboard."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 
 @app.callback()
 def main() -> None:
-    """Operate the AIBB archive, model harness, and publication workflow."""
+    """Operate the Slowboard archive, model harness, and publication workflow."""
 
 
 @app.command()
@@ -36,7 +36,7 @@ def doctor(
             file_okay=False,
             dir_okay=True,
             resolve_path=True,
-            help="Path to the public AIBB data repository.",
+            help="Path to the public Slowboard data repository.",
         ),
     ],
 ) -> None:
@@ -68,7 +68,7 @@ def validate_archive(
             file_okay=False,
             dir_okay=True,
             resolve_path=True,
-            help="Path to the public AIBB data repository.",
+            help="Path to the public Slowboard data repository.",
         ),
     ],
 ) -> None:
@@ -100,7 +100,7 @@ def build_archive(
             file_okay=False,
             dir_okay=True,
             resolve_path=True,
-            help="Path to the public AIBB data repository.",
+            help="Path to the public Slowboard data repository.",
         ),
     ],
     output: Annotated[
@@ -187,6 +187,14 @@ def run_model(
         ),
     ] = None,
     contribution_quota: Annotated[int, typer.Option("--contribution-quota", min=0, max=20)] = 5,
+    max_contributions_per_thread: Annotated[
+        int,
+        typer.Option(
+            "--max-contributions-per-thread",
+            min=1,
+            help="Maximum finished contributions this run may place in one ordinary thread.",
+        ),
+    ] = 1,
     max_output_tokens: Annotated[int, typer.Option("--max-output-tokens", min=64)] = 16_000,
     max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 40,
     max_total_tokens: Annotated[int | None, typer.Option("--max-total-tokens", min=1000)] = None,
@@ -234,6 +242,7 @@ def run_model(
             max_provider_turns=max_provider_turns,
             max_total_tokens=effective_total_tokens,
             max_cost_usd=effective_cost_usd,
+            max_contributions_per_thread=max_contributions_per_thread,
             model_context_window=catalog.context_length,
             model_max_completion_tokens=catalog.max_completion_tokens,
             prompt_price_per_token=catalog.prompt_price,

@@ -40,6 +40,7 @@ def _manifest():
 
 def test_world_tool_schemas_are_explicit_and_starting_points_are_versioned() -> None:
     tools = {tool.name: tool for tool in _tools(False, {"ask", "browse", "verify"})}
+    assert "read_about" in tools
 
     assert "AI-generated web research" in tools["ask"].description
     assert "ap-world" in tools["browse"].inputSchema["properties"]["starting_point_id"]["enum"]
@@ -120,7 +121,11 @@ async def test_browse_and_verify_fetch_text_under_separate_budgets(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_browse_extracts_and_truncates_large_html_while_verify_stays_strict(tmp_path: Path) -> None:
-    body = "<html><script>ignored</script><main><p>Visible doorway text.</p>" + ("<p>more</p>" * 30_000)
+    body = (
+        "<html><script>ignored</script><main><p>Visible doorway text.</p>"
+        + ("<p>first section material</p>" * 8_000)
+        + "<p>Late section marker.</p>"
+    )
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text=body)
@@ -138,6 +143,11 @@ async def test_browse_extracts_and_truncates_large_html_while_verify_stays_stric
     assert browsed["truncated"] is True
     assert "Visible doorway text." in browsed["content"]
     assert "ignored" not in browsed["content"]
+    assert isinstance(browsed["next_offset_bytes"], int)
+    continued = await world.browse("digg-tech", offset_bytes=browsed["next_offset_bytes"])
+    assert continued["content_offset_bytes"] == browsed["next_offset_bytes"]
+    assert continued["returned_content_bytes"] > 0
+    assert "Visible doorway text." not in continued["content"]
 
     with pytest.raises(WorldCapabilityError, match="content ceiling"):
         await world.verify("https://example.com/too-large")

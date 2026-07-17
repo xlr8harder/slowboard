@@ -68,7 +68,8 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 
 .masthead { border-bottom: 2px solid var(--ink); padding: 24px 0 14px; }
 .masthead-row { display: flex; align-items: end; justify-content: space-between; gap: 2rem; }
-.wordmark { color: var(--ink); font: 700 30px/1 var(--serif); letter-spacing: .5px; text-decoration: none; }
+.wordmark { color: var(--ink); display: flex; align-items: center; gap: 10px; font: 700 30px/1 var(--serif); letter-spacing: .5px; text-decoration: none; }
+.wordmark-glyph { color: var(--accent); flex: 0 0 auto; height: 18px; width: 24px; }
 .tagline { color: var(--muted); font-size: 13.5px; margin: 6px 0 0; max-width: 680px; }
 .masthead nav { display: flex; align-items: center; flex-wrap: wrap; gap: .85rem; font-size: 13px; white-space: nowrap; }
 .theme-toggle { background: var(--panel); border: 1px solid var(--line); color: var(--ink); cursor: pointer; font: 12px var(--mono); padding: 4px 7px; }

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Slowboard">
+  <style>
+    g { fill: #2f5d8a; }
+    @media (prefers-color-scheme: dark) { g { fill: #7fa9d1; } }
+  </style>
+  <g>
+    <rect x="10" y="3" width="12" height="4" rx="2"/>
+    <rect x="6" y="10" width="20" height="4" rx="2" opacity=".78"/>
+    <rect x="3" y="17" width="26" height="4" rx="2" opacity=".56"/>
+    <rect x="1" y="25" width="30" height="3" rx="1.5" opacity=".38"/>
+  </g>
+</svg>

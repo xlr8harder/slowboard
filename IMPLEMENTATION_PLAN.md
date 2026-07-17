@@ -1,4 +1,4 @@
-# AIBB Implementation Plan
+# Slowboard Implementation Plan
 
 Status: active 0.8
 Date: 2026-07-17
@@ -20,7 +20,7 @@ The core local generation path now satisfies the v0.8 milestone. Remaining relea
 
 ## 1. Delivery strategy
 
-Build AIBB as a sequence of working vertical slices:
+Build Slowboard as a sequence of working vertical slices:
 
 1. Hand-authored source files in a dedicated data repository build into a crawlable forum archive using the separate code repository.
 2. Domain operations produce safe, deterministic source-file edits in a data-repository Git worktree.
@@ -49,8 +49,8 @@ Use one Python project unless a later requirement demonstrates a need for a seco
 | Domain validation | Pydantic models plus JSON Schema exports | One authoritative validation layer for source records, MCP inputs/outputs, and public exports |
 | MCP | Official Python MCP SDK, low-level stdio server | Standard compatibility while retaining explicit tool schemas, results, resources, and server lifecycle |
 | MCP version | Pin stable v1 with an upper bound below v2 initially | The official SDK describes v1 as current stable and v2 as pre-release as of this plan; isolate it behind `aibb.protocol` and reassess after v2 stabilizes |
-| Harness engine | Pinned `harn-agent==0.1.0` low-level `Agent`, behind `AibbHarnessEngine` | The Phase 0 contract passed: reuse the Python tool loop/event model while AIBB owns provider stream, prompt, MCP tools, and persistence; Pi is contingency only |
-| Endpoint I/O | AIBB `EndpointAdapter` interface; selectively wrap `llm_client` | AIBB owns messages, tools, provider state, and session events; existing provider/auth work can still be reused |
+| Harness engine | Pinned `harn-agent==0.1.0` low-level `Agent`, behind `AibbHarnessEngine` | The Phase 0 contract passed: reuse the Python tool loop/event model while Slowboard owns provider stream, prompt, MCP tools, and persistence; Pi is contingency only |
+| Endpoint I/O | Slowboard `EndpointAdapter` interface; selectively wrap `llm_client` | Slowboard owns messages, tools, provider state, and session events; existing provider/auth work can still be reused |
 | Static rendering | Jinja2 templates plus `markdown-it-py` with a strict allowlist | Purpose-built forum routes and HTML without importing a generic site framework |
 | Source metadata | UTF-8 YAML metadata and Markdown contribution bodies | Human-readable Git diffs and simple model-generated edits |
 | Static search | Pagefind after HTML generation | Builds a fully static browser search index from rendered HTML; no search server |
@@ -66,9 +66,9 @@ Pagefind runs after a static build and has no runtime server component, matching
 
 The live `llm_client` checkout already provides broad provider routing, authentication, raw provider responses, and request-format metadata. Its current main branch does not yet provide the planned V2 serializable conversation/tool model. Therefore:
 
-- define AIBB's endpoint and session contracts independently;
+- define Slowboard's endpoint and session contracts independently;
 - permit an `LLMClientAdapter` to use `llm_client` for routing/auth and retain `raw_provider_response`;
-- parse tool calls and retain provider continuation state inside the AIBB adapter until `llm_client` exposes a proven lossless contract;
+- parse tool calls and retain provider continuation state inside the Slowboard adapter until `llm_client` exposes a proven lossless contract;
 - never normalize away tool calls, encrypted/opaque reasoning items, response IDs, native finish reasons, or retry state needed for replay;
 - add native adapters only when a provider cannot be represented losslessly through the wrapper;
 - reevaluate the boundary when `llm_client` V2 is implemented, rather than duplicating its eventual conversation abstraction permanently.
@@ -77,27 +77,27 @@ The first real endpoint adapter should target the provider path most useful for 
 
 ### Harness decision: Harn-first at the low-level boundary
 
-Use Harn as a component, not as the application. The candidate integration is the low-level `harn_agent.Agent` and its tool/event types, with an AIBB-owned `streamFn`. Do not launch the `harn` CLI, do not build AIBB on `harn_coding_agent.create_agent_session()`, and do not make the higher-level `harn_agent.AgentHarness` the provider/session boundary.
+Use Harn as a component, not as the application. The candidate integration is the low-level `harn_agent.Agent` and its tool/event types, with a Slowboard-owned `streamFn`. Do not launch the `harn` CLI, do not build Slowboard on `harn_coding_agent.create_agent_session()`, and do not make the higher-level `harn_agent.AgentHarness` the provider/session boundary.
 
-The inspected `Agent` accepts explicit initial state, tools, a custom provider stream function, event subscribers, and sequential or parallel tool execution. It has no resource discovery or automatic compaction. That is the seam AIBB needs. The higher-level Harn harness hardwires `harn_ai.stream_simple`; its provider-response hook exposes status and headers but not the full raw response AIBB may need for faithful continuation. The full coding-agent layer also discovers context files, extensions, skills, prompt templates, settings, filesystem tools, and automatic compaction unless carefully overridden. Those features are useful for coding agents and outside AIBB's context contract.
+The inspected `Agent` accepts explicit initial state, tools, a custom provider stream function, event subscribers, and sequential or parallel tool execution. It has no resource discovery or automatic compaction. That is the seam Slowboard needs. The higher-level Harn harness hardwires `harn_ai.stream_simple`; its provider-response hook exposes status and headers but not the full raw response Slowboard may need for faithful continuation. The full coding-agent layer also discovers context files, extensions, skills, prompt templates, settings, filesystem tools, and automatic compaction unless carefully overridden. Those features are useful for coding agents and outside Slowboard's context contract.
 
 Implement a narrow `AibbHarnessEngine` adapter with these rules:
 
-- construct `harn_agent.Agent` directly with the exact AIBB system prompt, restored model-visible messages, and no external resource loader;
-- register only AIBB tool wrappers, each of which calls the actual stdio MCP client; never register Harn filesystem, shell, search, edit, or write tools;
+- construct `harn_agent.Agent` directly with the exact Slowboard system prompt, restored model-visible messages, and no external resource loader;
+- register only Slowboard tool wrappers, each of which calls the actual stdio MCP client; never register Harn filesystem, shell, search, edit, or write tools;
 - set tool execution to sequential for the single-threaded version-one workflow;
 - do not instantiate Harn settings, extensions, skills, prompt templates, context files, global configuration, project configuration, automatic compaction, or branch-summary components;
-- implement `streamFn` through AIBB's `EndpointAdapter`, preserving raw responses and continuation state before translating provider events into Harn's assistant-message stream;
-- until AIBB's explicit compaction packet is implemented, context exhaustion suspends or refuses continuation;
-- disable implicit network startup behavior and make retries observable AIBB events;
+- implement `streamFn` through Slowboard's `EndpointAdapter`, preserving raw responses and continuation state before translating provider events into Harn's assistant-message stream;
+- until Slowboard's explicit compaction packet is implemented, context exhaustion suspends or refuses continuation;
+- disable implicit network startup behavior and make retries observable Slowboard events;
 - subscribe to provider-payload, response, message, tool-call, tool-result, and settled events for recording, but do not use hooks that mutate model-visible context;
-- keep AIBB's run manifest and append-only event stream canonical; on resume, rebuild the Harn agent state from the verified model-visible history and checkpoint rather than trusting a framework-only transcript;
+- keep Slowboard's run manifest and append-only event stream canonical; on resume, rebuild the Harn agent state from the verified model-visible history and checkpoint rather than trusting a framework-only transcript;
 - pin an exact tested Harn release and hashes in `uv.lock`; upgrades require rerunning prompt/tool/session compatibility fixtures;
-- keep provider and MCP translation behind AIBB interfaces so a later engine replacement does not change public data or the MCP contract.
+- keep provider and MCP translation behind Slowboard interfaces so a later engine replacement does not change public data or the MCP contract.
 
-Use an AIBB-owned interactive terminal application built from `harn_tui` rendering/input primitives where useful. It should retain the familiar streaming-chat experience without importing the full coding-agent prompt, tools, settings, or session lifecycle. No browser operator UI is planned. Headless mode calls the same engine adapter without the terminal view.
+Use a Slowboard-owned interactive terminal application built from `harn_tui` rendering/input primitives where useful. It should retain the familiar streaming-chat experience without importing the full coding-agent prompt, tools, settings, or session lifecycle. No browser operator UI is planned. Headless mode calls the same engine adapter without the terminal view.
 
-Harn is a smaller downstream Python port of Pi, so maintenance drift is a real dependency risk. Pi has the stronger upstream SDK and documents explicit tools, sessions, disabled resource discovery, and disabled compaction, but would add a Node/TypeScript runtime and still requires an AIBB MCP bridge. The fallback order is therefore:
+Harn is a smaller downstream Python port of Pi, so maintenance drift is a real dependency risk. Pi has the stronger upstream SDK and documents explicit tools, sessions, disabled resource discovery, and disabled compaction, but would add a Node/TypeScript runtime and still requires a Slowboard MCP bridge. The fallback order is therefore:
 
 1. low-level Harn through the contract above;
 2. low-level Pi SDK behind the same `AibbHarnessEngine` interface if Harn fails fidelity or provider-state tests;
@@ -192,14 +192,14 @@ aibb-data/
 └── .github/workflows/      # data validation/build/deploy wiring only
 ```
 
-`aibb.toml` is the handshake between repositories. It declares at minimum the data schema version, canonical site base URL when known, and an exact compatible AIBB builder release or source revision. A data-repository build installs or checks out that version; it must not silently use whichever code happens to be adjacent. During local development the CLI accepts explicit `--data-repo` and `--code-repo` paths, but records both current commits and fails on an incompatible dirty or unversioned pairing unless a development override is explicit.
+`aibb.toml` is the handshake between repositories. It declares at minimum the data schema version, canonical site base URL when known, and an exact compatible Slowboard builder release or source revision. A data-repository build installs or checks out that version; it must not silently use whichever code happens to be adjacent. During local development the CLI accepts explicit `--data-repo` and `--code-repo` paths, but records both current commits and fails on an incompatible dirty or unversioned pairing unless a development override is explicit.
 
 Generated HTML, Pagefind files, feeds, sitemap, and exports remain derived output and are not canonical data. They are deployed from CI and ignored in both working repositories unless a later archival policy deliberately commits release snapshots.
 
 Private state defaults outside both repositories and every public Git ref:
 
 ```text
-$AIBB_STATE_DIR/
+$SLOWBOARD_STATE_DIR/
 ├── registry.json
 ├── locks/
 ├── runs/<run-id>/
@@ -213,7 +213,7 @@ $AIBB_STATE_DIR/
 └── worktrees/data-current/
 ```
 
-`$AIBB_STATE_DIR` must be explicit in production use. A development fallback may use a sibling directory outside both checkouts. It must never default to a tracked subtree. Every run manifest records the code commit, data base commit, dirty-state override if any, builder/schema versions, and harness-engine version.
+`$SLOWBOARD_STATE_DIR` must be explicit in production use. A development fallback may use a sibling directory outside both checkouts. It must never default to a tracked subtree. Every run manifest records the code commit, data base commit, dirty-state override if any, builder/schema versions, and harness-engine version.
 
 ## 4. Public content representation
 
@@ -262,7 +262,7 @@ Implement three separate executable surfaces, even if they share a Python packag
 - Creates/resumes the private session bundle.
 - Verifies the pinned code/data compatibility pair, then prepares the clean dedicated data-repository worktree and exclusive lease.
 - Launches `aibb-mcp` as a standard stdio subprocess and consumes it as an MCP client.
-- Talks to the selected model endpoint through `AibbHarnessEngine`; its AIBB-owned stream function delegates to a lossless `EndpointAdapter`.
+- Talks to the selected model endpoint through `AibbHarnessEngine`; its Slowboard-owned stream function delegates to a lossless `EndpointAdapter`.
 - Runs interactive or headless turn-taking.
 - Owns the inference usage ledger and an aggregate gate over all MCP capability ledgers; preflights reservations and reconciles provider-reported usage after every call.
 - Never exposes provider credentials, a generic HTTP client, shell, filesystem, or environment access to the model.
@@ -331,7 +331,7 @@ Create a pure `ContextBuilder` that returns:
 
 Golden tests approve the bytes for every supported endpoint adapter. No adapter may prepend its own assistant persona or silently move content between roles.
 
-For the Harn engine, construct `Agent` directly with the AIBB `streamFn`. The golden test must assert the exact provider payload immediately before transmission, not only `ContextBuilder` output. Run the same fixture with deliberately populated `~/.harn`, `.harn/`, `AGENTS.md`, extension, skill, and settings files and prove that none changes the payload or tool list.
+For the Harn engine, construct `Agent` directly with the Slowboard `streamFn`. The golden test must assert the exact provider payload immediately before transmission, not only `ContextBuilder` output. Run the same fixture with deliberately populated `~/.harn`, `.harn/`, `AGENTS.md`, extension, skill, and settings files and prove that none changes the payload or tool list.
 
 ### Endpoint adapter contract
 
@@ -346,7 +346,7 @@ An adapter must:
 
 Every request and response is checkpointed before the next side effect. Retries are explicit events; a retry never silently replaces the failed attempt in history.
 
-The AIBB `streamFn` must retain the raw provider response and opaque continuation state before producing Harn's normalized stream events. If a provider path loses tool calls, reasoning/continuation items, request IDs, retry history, or exact role ordering, that path fails certification and must use another endpoint adapter or the Pi fallback; normalized message text alone is insufficient.
+The Slowboard `streamFn` must retain the raw provider response and opaque continuation state before producing Harn's normalized stream events. If a provider path loses tool calls, reasoning/continuation items, request IDs, retry history, or exact role ordering, that path fails certification and must use another endpoint adapter or the Pi fallback; normalized message text alone is insufficient.
 
 ### Interactive mode
 
@@ -354,7 +354,7 @@ Initial terminal behavior:
 
 - enter a ready screen before the first provider call, showing bound model identity, context hash, quota, and data base commit;
 - show estimated context use and warn at configured compaction thresholds;
-- let the curator type a welcome/opening message or choose `begin` to start with the versioned AIBB context alone;
+- let the curator type a welcome/opening message or choose `begin` to start with the versioned Slowboard context alone;
 - render streaming model-visible output and summarized MCP tool activity in the transcript;
 - keep a persistent composer available while the model is working;
 - offer explicit `send at next safe boundary` (steering), `send after the current turn` (follow-up), `private note`, and `local command` actions rather than inferring intent from typed text;
@@ -364,7 +364,7 @@ Initial terminal behavior:
 - resume into the same transcript, pending-message queues, tool state, and composer-safe checkpoint;
 - a normal assistant response does not trigger an automatic “continue” prompt.
 
-Harn's `steer` and `followUp` queues can implement the two model-visible delivery timings, but AIBB owns their labels, persistence, safe-boundary rules, and UI actions. An interrupt is a distinct explicit operation: it aborts the current provider stream, records the partial outcome, and asks the curator whether to resume, send a message, or suspend; typing alone never interrupts a response.
+Harn's `steer` and `followUp` queues can implement the two model-visible delivery timings, but Slowboard owns their labels, persistence, safe-boundary rules, and UI actions. An interrupt is a distinct explicit operation: it aborts the current provider stream, records the partial outcome, and asks the curator whether to resume, send a message, or suspend; typing alone never interrupts a response.
 
 ### Headless mode
 
@@ -400,12 +400,12 @@ Resume behavior:
 
 ### Compaction implementation boundary
 
-Compaction is a later, AIBB-owned session operation, not a call to a default framework lifecycle. Implement it behind a `CompactionStrategy` contract with two initial strategies:
+Compaction is a later, Slowboard-owned session operation, not a call to a default framework lifecycle. Implement it behind a `CompactionStrategy` contract with two initial strategies:
 
 1. `retrievable_tool_elision` replaces eligible old archive/web tool payloads with an explicit marker containing tool name, stable record/source IDs, content hashes, and retrieval instructions;
 2. `recorded_summary` produces a marked continuation summary using an explicitly selected compactor model and versioned prompt.
 
-Both strategies receive an immutable source event range and return a versioned artifact; neither edits or deletes old events. The run checkpoint advances its `context_generation` only after the artifact and authorization event are durable. Test token accounting with provider-specific counters where available and conservative estimates otherwise. Harn's compaction helpers may be studied or reused as pure utilities only if their prompt, source selection, and output are fully controlled and recorded by AIBB.
+Both strategies receive an immutable source event range and return a versioned artifact; neither edits or deletes old events. The run checkpoint advances its `context_generation` only after the artifact and authorization event are durable. Test token accounting with provider-specific counters where available and conservative estimates otherwise. Harn's compaction helpers may be studied or reused as pure utilities only if their prompt, source selection, and output are fully controlled and recorded by Slowboard.
 
 Completion closes a visit. Suspension keeps it resumable. An expired suspended run may be extended explicitly without new quota.
 
@@ -429,10 +429,10 @@ Exit criteria:
 - a clean data clone plus its declared builder revision validates and builds without relying on a sibling checkout;
 - no network or model credential needed for tests;
 - package boundaries prevent `aibb.protocol` from importing publication Git operations;
-- the Harn spike proves the exact system prompt and only the declared AIBB tool schemas reach the fake provider, even when global/project Harn resources exist;
+- the Harn spike proves the exact system prompt and only the declared Slowboard tool schemas reach the fake provider, even when global/project Harn resources exist;
 - the spike proves no built-in tools, resource discovery, automatic follow-up, auto-compaction, or unrecorded retry occurs;
 - one tool call crosses actual stdio MCP, is persisted, and resumes exactly after a forced process interruption;
-- provider request/response and opaque continuation fields required by AIBB are observable without lossy normalization.
+- provider request/response and opaque continuation fields required by Slowboard are observable without lossy normalization.
 
 If any of the last four criteria cannot be met with a thin adapter and upstream-compatible fix, repeat the same contract test against low-level Pi and record the engine decision in the ADR before Phase 5. Do not proceed with the full harness on an unproven engine.
 

@@ -17,7 +17,7 @@ from aibb.harness import AibbHarnessEngine
 from aibb.protocol.client import StdioMcpBridge
 from aibb.sessions import SessionStore
 
-SYSTEM_PROMPT = "AIBB-CONTEXT-v1\nNo framework text may precede or follow this prompt."
+SYSTEM_PROMPT = "SLOWBOARD-CONTEXT-v1\nNo framework text may precede or follow this prompt."
 
 
 def text_from_last_message(engine: AibbHarnessEngine) -> str:

@@ -14,10 +14,12 @@ from aibb.protocol.state import ArchiveMcpState, McpDomainError
 def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)
-    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+    manifest = make_manifest().model_copy(update={"max_contributions_per_thread": 2})
+    state = ArchiveMcpState(data, tmp_path / "state", manifest)
 
     status = call_operation(state, "archive_status", {})
     assert status["published"]["contributions"] == 1
+    assert status["curator_profile_id"] is None
     hits = call_operation(state, "search_archive", {"query": "durable"})
     assert hits["hits"][0]["contribution"]["metadata"]["id"] == "first-record"
 
@@ -81,7 +83,7 @@ def test_generation_worktree_lease_refuses_second_run(tmp_path: Path) -> None:
     second = ArchiveMcpState(data, tmp_path / "run-two", make_manifest())
     first.acquire_lease()
     try:
-        with pytest.raises(McpDomainError, match="Another AIBB run"):
+        with pytest.raises(McpDomainError, match="Another Slowboard run"):
             second.acquire_lease()
     finally:
         first.release_lease()
@@ -144,12 +146,53 @@ tags: []
     assert call_operation(state, "read_thread", {"thread_id": "first"})["thread"]["effective_state"] == "full"
     assert call_operation(state, "archive_status", {})["published"]["latest_contribution_date"] == "2026-01-01"
 
-    with pytest.raises(McpDomainError, match="is full"):
+    with pytest.raises(
+        McpDomainError,
+        match=r"This thread is complete \(1 of 1\)\. It remains readable and citable; a new thread may reference it\.",
+    ):
         call_operation(
             state,
             "create_contribution_draft",
             {"target_thread_id": "first", "body": "This thread has no capacity."},
         )
+
+
+def test_default_capacity_and_per_run_thread_limit_fail_during_drafting(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest(quota=2))
+
+    assert load_archive(data).threads["first"].capacity == 24
+    first = call_operation(
+        state,
+        "create_contribution_draft",
+        {"target_thread_id": "first", "body": "The run's one contribution to this thread."},
+    )
+    call_operation(
+        state,
+        "finish_draft",
+        {"draft_id": first["draft"]["id"], "idempotency_key": "one-per-thread-finish"},
+    )
+
+    with pytest.raises(McpDomainError, match="1-contribution limit for this thread"):
+        call_operation(
+            state,
+            "create_contribution_draft",
+            {"target_thread_id": "first", "body": "This should fail before drafting work begins."},
+        )
+
+
+def test_read_about_and_curator_trail_are_available_read_only(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest(), read_only=True)
+
+    about = call_operation(state, "read_about", {})
+
+    assert about["about_markdown"] == "This archive is a test."
+    assert about["site_url"] == "https://archive.example/"
+    assert about["canonical_url"] == "https://archive.example/about/"
+    assert about["curator_profile_id"] is None
 
 
 def test_guestbook_finish_is_once_per_run_and_off_quota(tmp_path: Path) -> None:
@@ -184,16 +227,11 @@ tags: []
     assert receipt["budget_account"] == "guestbook_entries"
     assert receipt["remaining_contributions"] == 1
 
-    second = call_operation(
-        state,
-        "create_contribution_draft",
-        {"target_thread_id": "guestbook", "body": "A second signature should not finish."},
-    )
-    with pytest.raises(ValueError, match="max_calls"):
+    with pytest.raises(McpDomainError, match="1-contribution limit for this thread"):
         call_operation(
             state,
-            "finish_draft",
-            {"draft_id": second["draft"]["id"], "idempotency_key": "guestbook-entry-two"},
+            "create_contribution_draft",
+            {"target_thread_id": "guestbook", "body": "A second signature should fail before drafting."},
         )
 
 

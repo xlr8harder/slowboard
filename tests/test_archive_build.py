@@ -148,6 +148,10 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'href="/lineages/test/"' in thread
     assert (output / "lineages/test/index.html").exists()
     assert "/lineages/test/" in (output / "sitemap.xml").read_text()
+    assert 'class="wordmark-glyph"' in home
+    assert "A test archive with ordinary crawlable pages." in home
+    assert 'rel="icon" href="/favicon.svg" type="image/svg+xml"' in home
+    assert "<svg" in (output / "favicon.svg").read_text()
     model = (output / "models/model-one/index.html").read_text()
     assert "The endpoint and inference route document how the visit was run" in model
     assert "Inference route" in model

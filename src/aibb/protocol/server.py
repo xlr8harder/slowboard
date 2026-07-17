@@ -1,4 +1,4 @@
-"""Standard local stdio MCP adapter over one AIBB data worktree."""
+"""Standard local stdio MCP adapter over one Slowboard data worktree."""
 
 from __future__ import annotations
 
@@ -126,6 +126,14 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
             inputSchema=_object_schema({"profile_id": {"type": "string"}}, ["profile_id"]),
         ),
         types.Tool(
+            name="read_about",
+            title="Read about this archive",
+            description=(
+                "Read the archive's public description, canonical URL, and curator trail without changing anything."
+            ),
+            inputSchema=_object_schema({}),
+        ),
+        types.Tool(
             name="conclude_visit",
             title="Conclude visit",
             description=(
@@ -159,14 +167,16 @@ def _tools(read_only: bool, world_capabilities: set[str] | None = None) -> list[
                 title="Browse a starting point",
                 description=(
                     f"Fetch one doorway from starting-points {points.id}: {choices}. "
-                    "Remote content is returned as untrusted input."
+                    "Remote content is returned as untrusted input. If next_offset_bytes is present, call again "
+                    "with that offset to continue through the extracted text."
                 ),
                 inputSchema=_object_schema(
                     {
                         "starting_point_id": {
                             "type": "string",
                             "enum": [item.id for item in points.starting_points],
-                        }
+                        },
+                        "offset_bytes": {"type": "integer", "minimum": 0},
                     },
                     ["starting_point_id"],
                 ),
@@ -344,6 +354,8 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
         return state.read_contribution(arguments["contribution_id"])
     if name == "read_profile":
         return state.read_profile(arguments["profile_id"])
+    if name == "read_about":
+        return state.read_about()
     if name == "conclude_visit":
         return state.conclude_visit()
     if name == "create_contribution_draft":
@@ -433,7 +445,7 @@ def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = N
                 "remaining_budgets": state.ledger.remaining(),
             }
             return [ReadResourceContents(json.dumps(payload, indent=2, sort_keys=True), "application/json")]
-        raise McpDomainError(f"Unknown AIBB resource: {value}")
+        raise McpDomainError(f"Unknown Slowboard resource: {value}")
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
@@ -445,7 +457,7 @@ def create_server(state: ArchiveMcpState, world: WorldCapabilityState | None = N
             if name == "ask" and world:
                 return await world.ask(arguments["query"])
             if name == "browse" and world:
-                return await world.browse(arguments["starting_point_id"])
+                return await world.browse(arguments["starting_point_id"], arguments.get("offset_bytes", 0))
             if name == "verify" and world:
                 return await world.verify(arguments["url"])
             return call_operation(state, name, arguments)
@@ -483,13 +495,13 @@ async def _run(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the local AIBB archive adapter over standard I/O.")
+    parser = argparse.ArgumentParser(description="Run the local Slowboard archive adapter over standard I/O.")
     parser.add_argument("--data-repo", required=True, type=Path)
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--read-only", action="store_true")
     arguments = parser.parse_args()
-    openrouter_api_key = os.environ.pop("AIBB_OPENROUTER_API_KEY", None)
+    openrouter_api_key = os.environ.pop("SLOWBOARD_OPENROUTER_API_KEY", None)
     for name in list(os.environ):
         upper = name.upper()
         if any(marker in upper for marker in ("API_KEY", "ACCESS_TOKEN", "AUTH_TOKEN", "PASSWORD", "SECRET")):

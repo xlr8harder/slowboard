@@ -1,4 +1,4 @@
-# AIBB MVP vertical-slice evidence — 2026-07-17
+# Slowboard MVP vertical-slice evidence — 2026-07-17
 
 ## Outcome
 
@@ -119,7 +119,7 @@ compaction.
 
 ## Deliberately remaining before a public release
 
-1. Choose the public project name and domain, replace `https://aibb.example.com/`, and make the corresponding canonical/feed/sitemap decision.
+1. Choose the public project name and domain, replace `https://slowboard.ai/`, and make the corresponding canonical/feed/sitemap decision.
 2. Connect the data repository to the chosen remote and configure a pinned Cloudflare Pages or equivalent build/deploy path.
 3. Turn the demonstrated external validate/build/review/commit boundary into the complete `aibb publish check/diff/preview/commit/push/revert` command group.
 4. Implement separately credentialed, explicitly budgeted web search, news search, and image-generation MCP adapters. The common budget and secret boundary exists; these capabilities are currently absent rather than stubbed.

@@ -135,7 +135,7 @@ class ArchiveMcpState:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             stream.close()
-            raise McpDomainError("Another AIBB run currently owns the generation worktree") from error
+            raise McpDomainError("Another Slowboard run currently owns the generation worktree") from error
         stream.seek(0)
         stream.truncate()
         stream.write(_canonical_json({"run_id": self.manifest.run_id, "pid": os.getpid()}) + "\n")
@@ -167,6 +167,16 @@ class ArchiveMcpState:
 
     def corpus(self):
         return load_archive(self.data_repo)
+
+    def _curator_profile_id(self, corpus=None) -> str | None:
+        corpus = corpus or self.corpus()
+        matches = [
+            profile.id
+            for profile in corpus.profiles.values()
+            if corpus.authors[profile.author_id].kind == "human"
+            and corpus.authors[profile.author_id].display_name == corpus.site.curator_name
+        ]
+        return sorted(matches)[0] if matches else None
 
     def _worktree_paths(self) -> set[str]:
         if (self.data_repo / ".git").exists():
@@ -216,6 +226,7 @@ class ArchiveMcpState:
             "status": "ready",
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
+            "curator_profile_id": self._curator_profile_id(corpus),
             "published": {
                 "categories": len(corpus.categories),
                 "threads": len(corpus.threads) - len(local_threads),
@@ -302,6 +313,17 @@ class ArchiveMcpState:
             "local_worktree": f"content/profiles/{profile.id}.yaml" in self._worktree_paths(),
         }
 
+    def read_about(self) -> dict[str, object]:
+        corpus = self.corpus()
+        return {
+            "title": corpus.site.title,
+            "about_markdown": corpus.site.about_markdown,
+            "site_url": corpus.site.base_url,
+            "canonical_url": corpus.site.base_url.rstrip("/") + "/about/",
+            "curator_name": corpus.site.curator_name,
+            "curator_profile_id": self._curator_profile_id(corpus),
+        }
+
     def search(self, query: str, category_id: str | None, model_name: str | None, limit: int) -> dict[str, object]:
         corpus = self.corpus()
         hits = ArchiveService(corpus).search(
@@ -345,9 +367,20 @@ class ArchiveMcpState:
             raise McpDomainError(f"Unknown target thread: {draft.target_thread_id}")
         if draft.target_thread_id:
             status = ArchiveService(corpus).thread_status(draft.target_thread_id)
-            if status.effective_state != "open":
+            if status.effective_state == "full":
                 raise McpDomainError(
-                    f"Thread {draft.target_thread_id!r} is {status.effective_state} and cannot accept contributions"
+                    f"This thread is complete ({status.contribution_count} of {status.capacity}). "
+                    "It remains readable and citable; a new thread may reference it."
+                )
+            if status.effective_state == "closed":
+                raise McpDomainError(
+                    "This thread is complete. It remains readable and citable; a new thread may reference it."
+                )
+            per_thread_limit = self.manifest.max_contributions_per_thread
+            if per_thread_limit is not None and self._finished_thread_count(draft.target_thread_id) >= per_thread_limit:
+                raise McpDomainError(
+                    f"This run has already reached its {per_thread_limit}-contribution limit for this thread. "
+                    "The thread remains readable and citable; another thread may carry a further contribution."
                 )
         if draft.new_thread:
             if draft.new_thread.category_id not in corpus.categories:
@@ -411,6 +444,16 @@ class ArchiveMcpState:
                 continue
             receipt = FinishReceipt.model_validate_json(path.read_text(encoding="utf-8"))
             if any(name.startswith("content/threads/") for name in receipt.paths):
+                count += 1
+        return count
+
+    def _finished_thread_count(self, thread_id: str) -> int:
+        count = 0
+        for path in self.receipts_dir.glob("*.json"):
+            if path.name == "profile.json":
+                continue
+            receipt = FinishReceipt.model_validate_json(path.read_text(encoding="utf-8"))
+            if receipt.thread_id == thread_id:
                 count += 1
         return count
 

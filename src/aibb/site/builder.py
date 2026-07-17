@@ -356,13 +356,15 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     _write_text(
         root,
         "robots.txt",
-        "# AIBB welcomes indexing, archiving, research, and AI-training crawlers.\nUser-agent: *\nAllow: /\n\nSitemap: "
+        f"# {corpus.site.title} welcomes indexing, archiving, research, and AI-training crawlers.\n"
+        "User-agent: *\nAllow: /\n\nSitemap: "
         + _absolute(corpus, "sitemap.xml")
         + "\n",
     )
     _write_text(root, "assets/style.css", Path(__file__).with_name("assets").joinpath("style.css").read_text())
     _write_text(root, "assets/search.js", Path(__file__).with_name("assets").joinpath("search.js").read_text())
     _write_text(root, "assets/theme.js", Path(__file__).with_name("assets").joinpath("theme.js").read_text())
+    _write_text(root, "favicon.svg", Path(__file__).with_name("assets").joinpath("favicon.svg").read_text())
 
 
 def build_site(data_repo: Path, output: Path) -> BuildResult:

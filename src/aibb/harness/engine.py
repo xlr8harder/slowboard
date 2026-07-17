@@ -1,4 +1,4 @@
-"""Narrow AIBB-owned boundary around Harn's low-level agent loop."""
+"""Narrow Slowboard-owned boundary around Harn's low-level agent loop."""
 
 from __future__ import annotations
 
