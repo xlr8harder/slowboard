@@ -147,7 +147,11 @@ class SessionStore:
         _fsync_directory(self.root)
         return checkpoint
 
-    def read_checkpoint(self) -> SessionCheckpoint:
+    def read_checkpoint(
+        self,
+        *,
+        allowed_trailing_event_types: set[str] | None = None,
+    ) -> SessionCheckpoint:
         try:
             checkpoint = SessionCheckpoint.model_validate_json(self.checkpoint_path.read_text(encoding="utf-8"))
         except FileNotFoundError as error:
@@ -157,7 +161,15 @@ class SessionStore:
         if checkpoint.run_id != self.run_id:
             raise SessionStoreError(f"Checkpoint belongs to run {checkpoint.run_id}, expected {self.run_id}")
         events = self.read_events()
-        current_hash = events[-1].event_hash if events else None
-        if checkpoint.event_sequence != len(events) or checkpoint.event_hash != current_hash:
-            raise SessionStoreError("Checkpoint does not describe the current durable event boundary")
+        boundary_hash = (
+            events[checkpoint.event_sequence - 1].event_hash if 0 < checkpoint.event_sequence <= len(events) else None
+        )
+        if checkpoint.event_sequence > len(events) or checkpoint.event_hash != boundary_hash:
+            raise SessionStoreError("Checkpoint does not describe a valid durable event boundary")
+        trailing = events[checkpoint.event_sequence :]
+        if trailing and (
+            allowed_trailing_event_types is None
+            or any(event.type not in allowed_trailing_event_types for event in trailing)
+        ):
+            raise SessionStoreError("Checkpoint has unsafe trailing events and cannot be resumed automatically")
         return checkpoint

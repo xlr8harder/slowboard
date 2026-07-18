@@ -22,7 +22,7 @@ from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_model
 from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
 from aibb.harness.context import build_context_envelope
-from aibb.harness.engine import AibbHarnessEngine
+from aibb.harness.engine import AibbHarnessEngine, EngineSnapshot
 from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
@@ -30,6 +30,22 @@ from aibb.runtime.models import BoundModelIdentity, BudgetLimits
 from aibb.sessions import SessionStore
 
 CURRENT_ORIENTATION_VERSION = "v0.4"
+
+
+def _remove_failed_assistant_placeholder(snapshot: EngineSnapshot) -> tuple[EngineSnapshot, bool]:
+    """Restore the input boundary after a provider error emitted no model content."""
+    if not snapshot.messages:
+        return snapshot, False
+    last = snapshot.messages[-1]
+    retryable = (
+        last.get("role") == "assistant"
+        and last.get("stopReason") == "error"
+        and not last.get("content")
+        and bool(last.get("errorMessage"))
+    )
+    if not retryable:
+        return snapshot, False
+    return snapshot.model_copy(update={"messages": snapshot.messages[:-1]}), True
 
 
 def _slug(value: str, limit: int = 70) -> str:
@@ -405,7 +421,7 @@ async def run_openrouter_visit(
         return None
 
     mcp_environment = _clean_mcp_environment()
-    if {"ask", "generate_image"} & manifest.capability_budgets.keys():
+    if {"ask", "web", "generate_image"} & manifest.capability_budgets.keys():
         mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
     parameters = StdioServerParameters(
         command=sys.executable,
@@ -425,16 +441,29 @@ async def run_openrouter_visit(
         tools = await bridge.agent_tools()
         checkpoint_path = run_dir / "session/checkpoint.json"
         if checkpoint_path.exists():
-            checkpoint = store.read_checkpoint()
-            if checkpoint.engine.model["id"] != manifest.identity.model_name:
+            checkpoint = store.read_checkpoint(
+                allowed_trailing_event_types={"run_resumed", "context_only_begin", "provider_retry_prepared"}
+            )
+            restored, retrying_provider_error = _remove_failed_assistant_placeholder(checkpoint.engine)
+            if restored.model["id"] != manifest.identity.model_name:
                 raise ValueError("Saved checkpoint model does not match the run manifest")
+            if retrying_provider_error:
+                store.append(
+                    "provider_retry_prepared",
+                    {"reason": "removed empty failed-assistant placeholder; model-visible input is unchanged"},
+                    "operator",
+                )
             engine = AibbHarnessEngine.from_snapshot(
-                checkpoint.engine,
+                restored,
                 tools=tools,
                 stream_fn=adapter,
                 prepare_next_turn=prepare_next_turn,
             )
-            store.append("run_resumed", {"model": manifest.identity.model_name}, "operator")
+            store.append(
+                "run_resumed",
+                {"model": manifest.identity.model_name, "retrying_provider_error": retrying_provider_error},
+                "operator",
+            )
             store.write_checkpoint(engine.snapshot())
             context_digest = store.read_events()[0].payload.get("context_digest", "restored")
         else:

@@ -35,6 +35,17 @@ def test_event_chain_and_atomic_checkpoint_round_trip(tmp_path: Path) -> None:
     assert store.read_checkpoint().engine.provider_state == {"opaque": "retained"}
 
 
+def test_checkpoint_allows_only_explicitly_safe_trailing_events(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "run", "run-1")
+    store.append("run_created", {"model": "fixture"}, "operator")
+    store.write_checkpoint(snapshot_for_test())
+    store.append("context_only_begin", {}, "operator")
+
+    with pytest.raises(SessionStoreError, match="unsafe trailing events"):
+        store.read_checkpoint()
+    assert store.read_checkpoint(allowed_trailing_event_types={"context_only_begin"}).event_sequence == 1
+
+
 def test_event_tampering_is_detected(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "run", "run-1")
     store.append("run_created", {"model": "fixture"}, "operator")

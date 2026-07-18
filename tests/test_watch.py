@@ -90,5 +90,5 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "read “A test thread” · 1 of 1 contributions" in rendered
     assert "120 tokens · $0.0100" in rendered
     assert "503 limited availability" in rendered
-    assert "request reservation was released" in rendered
+    assert "failed call used no token or cost allowance" in rendered
     assert "run completed · model_concluded_visit" in rendered

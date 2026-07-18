@@ -48,8 +48,7 @@ def _bounded(value: Any, *, string_limit: int = 700, depth: int = 0) -> Any:
         return [_bounded(item, string_limit=string_limit, depth=depth + 1) for item in value[:12]]
     if isinstance(value, dict):
         return {
-            key: _bounded(item, string_limit=string_limit, depth=depth + 1)
-            for key, item in list(value.items())[:24]
+            key: _bounded(item, string_limit=string_limit, depth=depth + 1) for key, item in list(value.items())[:24]
         }
     return value
 
@@ -220,7 +219,7 @@ class RunEventRenderer:
                 Panel(
                     (
                         f"[bold]{error_type}[/bold]\n{message}\n\n"
-                        "The request reservation was released; the run remains intact."
+                        "The failed call used no token or cost allowance; the run remains intact."
                     ),
                     title="Provider error",
                     border_style="red",
@@ -270,4 +269,8 @@ def watch_event_stream(
                 time.sleep(poll_seconds)
                 continue
             if renderer.render(event):
+                after_terminal = stream.tell()
+                if stream.readline():
+                    stream.seek(after_terminal)
+                    continue
                 return

@@ -5,7 +5,13 @@ from pathlib import Path
 from test_archive_build import _write_archive
 from test_budget import make_manifest
 
-from aibb.harness.runner import CURRENT_ORIENTATION_VERSION, _check_collision, _turn_boundary_outcome
+from aibb.harness.engine import EngineSnapshot
+from aibb.harness.runner import (
+    CURRENT_ORIENTATION_VERSION,
+    _check_collision,
+    _remove_failed_assistant_placeholder,
+    _turn_boundary_outcome,
+)
 
 
 def test_current_orientation_adds_curatorial_permission_as_a_new_version() -> None:
@@ -53,3 +59,24 @@ def test_collision_identity_ignores_nonstandard_public_records(tmp_path: Path) -
     matches = _check_collision(data, tmp_path / "state", "test/model-one")
 
     assert matches == []
+
+
+def test_failed_empty_assistant_placeholder_is_removed_for_exact_retry() -> None:
+    snapshot = EngineSnapshot(
+        system_prompt="",
+        model={"id": "example/model"},
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "exact input"}]},
+            {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "errorMessage": "402 Payment Required",
+            },
+        ],
+    )
+
+    restored, changed = _remove_failed_assistant_placeholder(snapshot)
+
+    assert changed is True
+    assert restored.messages == snapshot.messages[:1]

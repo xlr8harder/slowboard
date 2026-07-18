@@ -151,9 +151,7 @@ def _messages(context: Context, *, image_input_supported: bool = False) -> list[
             if image_input_supported:
                 pending_images.extend(_image_content(message.content))
                 next_role = (
-                    getattr(context.messages[index + 1], "role", None)
-                    if index + 1 < len(context.messages)
-                    else None
+                    getattr(context.messages[index + 1], "role", None) if index + 1 < len(context.messages) else None
                 )
                 if next_role != "toolResult" and pending_images:
                     messages.append(
@@ -417,7 +415,11 @@ class OpenRouterAdapter:
         except Exception as error:  # noqa: BLE001
             account = self.ledger.read().accounts["inference"]
             if reservation_key in account.reservations:
-                self.ledger.reconcile("inference", reservation_key)
+                self.ledger.reconcile(
+                    "inference",
+                    reservation_key,
+                    LedgerUsage(calls=1, request_bytes=requested.request_bytes),
+                )
             self.session.append(
                 "provider_error",
                 {"reservation_key": reservation_key, "type": type(error).__name__, "message": str(error)},
