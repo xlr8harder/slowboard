@@ -363,5 +363,14 @@ def test_conclude_visit_is_idempotent_off_quota_and_private(tmp_path: Path) -> N
     assert first == second
     assert first["concluded_by"] == "model"
     assert first["public_changes"] is False
-    assert call_operation(state, "archive_status", {})["remaining_budgets"] == before
+    status = call_operation(state, "archive_status", {})
+    assert status["status"] == "concluded"
+    assert status["read_only"] is True
+    assert status["remaining_budgets"] == before
+    with pytest.raises(McpDomainError, match="read-only"):
+        call_operation(
+            state,
+            "create_contribution_draft",
+            {"target_thread_id": "first", "body": "No drafting after conclusion."},
+        )
     assert not list(data.rglob("*conclusion*"))

@@ -146,10 +146,10 @@ class ArchiveMcpState:
         self.data_repo = data_repo.resolve()
         self.state_dir = state_dir.resolve()
         self.manifest = manifest
-        self.read_only = read_only or manifest.read_only
         self.drafts_dir = self.state_dir / "drafts"
         self.receipts_dir = self.state_dir / "receipts"
         self.conclusion_path = self.state_dir / "visit-conclusion.json"
+        self.read_only = read_only or manifest.read_only or self.conclusion_path.exists()
         self.drafts_dir.mkdir(parents=True, exist_ok=True)
         self.receipts_dir.mkdir(parents=True, exist_ok=True)
         self.ledger = BudgetLedger(self.state_dir / "budgets.json", manifest)
@@ -180,6 +180,7 @@ class ArchiveMcpState:
 
     def conclude_visit(self) -> dict[str, object]:
         if self.conclusion_path.exists():
+            self.read_only = True
             return json.loads(self.conclusion_path.read_text(encoding="utf-8"))
         payload = {
             "schema_version": 1,
@@ -193,6 +194,7 @@ class ArchiveMcpState:
             self.conclusion_path,
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         )
+        self.read_only = True
         return payload
 
     def corpus(self):
@@ -259,7 +261,7 @@ class ArchiveMcpState:
             if f"content/threads/{item.id}.yaml" not in worktree_paths
         ]
         return {
-            "status": "ready",
+            "status": "concluded" if self.conclusion_path.exists() else "ready",
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
             "curator_profile_id": self._curator_profile_id(corpus),

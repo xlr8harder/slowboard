@@ -425,6 +425,11 @@ async def run_openrouter_visit(
                 )
         return None
 
+    def should_stop_after_turn(_active_engine: AibbHarnessEngine) -> bool:
+        """End Harn immediately after conclude_visit persists its receipt."""
+
+        return (run_dir / "mcp/visit-conclusion.json").exists()
+
     mcp_environment = _clean_mcp_environment()
     if {"ask", "web", "generate_image"} & manifest.capability_budgets.keys():
         mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
@@ -463,6 +468,7 @@ async def run_openrouter_visit(
                 tools=tools,
                 stream_fn=adapter,
                 prepare_next_turn=prepare_next_turn,
+                should_stop_after_turn=should_stop_after_turn,
             )
             store.append(
                 "run_resumed",
@@ -508,6 +514,7 @@ async def run_openrouter_visit(
                     "reasoning": manifest.reasoning.model_dump(mode="json"),
                 },
                 prepare_next_turn=prepare_next_turn,
+                should_stop_after_turn=should_stop_after_turn,
             )
             context_digest = envelope.digest
 

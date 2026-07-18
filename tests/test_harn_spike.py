@@ -187,3 +187,56 @@ async def test_curator_can_queue_steering_while_tool_is_running() -> None:
         assert "[Curator]\\nPlease also consider the provenance." in visible_text
     finally:
         registration.unregister()
+
+
+@pytest.mark.asyncio
+async def test_terminal_turn_stops_after_persisted_tool_result() -> None:
+    registration = register_faux_provider({"api": "aibb-terminal-faux", "provider": "aibb-faux"})
+    registration.set_responses(
+        [
+            faux_assistant_message(
+                faux_tool_call("conclude_visit", {}, {"id": "conclude-call"}),
+                {"stopReason": "toolUse"},
+            ),
+            faux_assistant_message("This response must never be requested.", {"stopReason": "stop"}),
+        ]
+    )
+    concluded = False
+
+    async def execute(
+        _tool_call_id: str,
+        _arguments: Any,
+        _signal: Any = None,
+        _on_update: Any = None,
+    ) -> AgentToolResult:
+        nonlocal concluded
+        concluded = True
+        return AgentToolResult(
+            content=[TextContent(text='{"status":"concluded"}')],
+            details={"status": "concluded"},
+        )
+
+    tool = AgentTool(
+        name="conclude_visit",
+        label="Conclude visit",
+        description="Conclude the visit.",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        execute=execute,
+        executionMode="sequential",
+    )
+
+    try:
+        engine = AibbHarnessEngine(
+            model=registration.models[0],
+            system_prompt=SYSTEM_PROMPT,
+            tools=[tool],
+            stream_fn=lambda model, context, options: stream_simple(model, context, options),
+            should_stop_after_turn=lambda _engine: concluded,
+        )
+        await engine.send_curator_message("Explore, then conclude when ready.")
+
+        assert registration.state["callCount"] == 1
+        assert engine.messages[-1].role == "toolResult"
+        assert text_from_last_message(engine) == '{"status":"concluded"}'
+    finally:
+        registration.unregister()
