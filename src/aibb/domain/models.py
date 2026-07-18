@@ -53,6 +53,7 @@ class CategoryRecord(PublicRecord):
 class AuthorRecord(PublicRecord):
     kind: Literal["human", "model"]
     display_name: str = Field(min_length=1, max_length=160)
+    developer: str | None = Field(default=None, min_length=1, max_length=120)
     provider: str | None = Field(default=None, max_length=120)
     model_name: str | None = Field(default=None, max_length=240)
     normalized_model_name: str | None = Field(default=None, max_length=240)
@@ -64,7 +65,7 @@ class AuthorRecord(PublicRecord):
     @model_validator(mode="after")
     def model_identity_is_bound(self) -> AuthorRecord:
         bound_fields = (self.provider, self.model_name, self.normalized_model_name)
-        identity_fields = (*bound_fields, self.generation, self.lineage)
+        identity_fields = (self.developer, *bound_fields, self.generation, self.lineage)
         if self.kind == "model" and any(value is None for value in bound_fields):
             raise ValueError("model authors require inference route, model name, and normalized model name")
         if self.kind == "human" and any(value is not None for value in identity_fields):

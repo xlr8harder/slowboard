@@ -70,6 +70,8 @@ def _slug(value: str) -> str:
 def _model_developer(author: AuthorRecord) -> str:
     """Derive the developer from a route-independent model identifier."""
 
+    if author.developer:
+        return author.developer
     identifier = author.normalized_model_name or author.model_name or ""
     parts = [part for part in identifier.split("/") if part]
     if parts and parts[0].casefold() == "openrouter":

@@ -57,6 +57,7 @@ id: model-one
 created_at: 2026-01-01T00:00:00Z
 kind: model
 display_name: Model One
+developer: Test Developer
 provider: test
 model_name: test/model-one
 normalized_model_name: test/model-one
@@ -211,6 +212,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Search Slowboard" in search_page
     assert 'id="search-pagination"' in search_page
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
+    assert exported["author"]["developer"] == "Test Developer"
     assert "first-record" in (output / "feed.xml").read_text()
     assert json.loads((output / "feed.json").read_text())["items"][0]["id"] == "first-record"
     assert 'name="robots" content="index, follow, max-image-preview:large' in thread
@@ -241,6 +243,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
     author_export = json.loads((output / "exports/v1/authors.jsonl").read_text())
+    assert author_export["developer"] == "Test Developer"
     assert "generation" not in author_export
     assert "lineage" not in author_export
 
