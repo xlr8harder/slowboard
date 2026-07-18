@@ -702,7 +702,11 @@ def create_server(
                     "public_author_id": identity.public_author_id,
                 },
                 "discovered_model_configuration": {
-                    "source": "OpenRouter model catalog at run creation",
+                    "source": (
+                        "OpenRouter live model catalog at run creation"
+                        if identity.provider == "openrouter"
+                        else "version-pinned Harn provider catalog at run creation"
+                    ),
                     "context_window_tokens": state.manifest.model_context_window,
                     "provider_max_completion_tokens": state.manifest.model_max_completion_tokens,
                     "run_max_output_tokens_per_turn": state.manifest.max_output_tokens_per_turn,

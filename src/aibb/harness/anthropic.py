@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Literal
 
+from anthropic import AsyncAnthropic
 from harn_ai.models import get_model
 from harn_ai.providers.anthropic import stream_anthropic
 from harn_ai.types import AssistantMessage, AssistantMessageEvent, Context, ErrorEvent, Model, Usage, UsageCost
@@ -18,6 +19,34 @@ from aibb.runtime.budget import Usage as LedgerUsage
 from aibb.sessions.store import SessionStore
 
 ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
+
+
+class _StreamingMessages:
+    """Expose SDK event streaming without its incompatible raw-response wrapper."""
+
+    def __init__(self, resource: Any) -> None:
+        self._resource = resource
+
+    async def create(self, **parameters: Any) -> Any:
+        return await self._resource.create(**parameters)
+
+
+class _StreamingAnthropicClient:
+    """Narrow SDK client shape consumed by Harn's native event normalizer.
+
+    Anthropic SDK 0.116's ``with_raw_response.create(stream=True)`` returns a
+    wrapper whose body is not directly iterable.  Harn 0.1.0 currently selects
+    that wrapper whenever it is present.  Hiding only that convenience surface
+    makes Harn use the SDK's supported ``AsyncStream[RawMessageStreamEvent]``
+    path while leaving all message conversion and event normalization in Harn.
+    """
+
+    def __init__(self, *, api_key: str, timeout_seconds: float) -> None:
+        self._client = AsyncAnthropic(api_key=api_key, timeout=timeout_seconds, max_retries=0)
+        self.messages = _StreamingMessages(self._client.messages)
+
+    async def close(self) -> None:
+        await self._client.close()
 
 
 def anthropic_model(model_id: str) -> Model:
@@ -48,6 +77,7 @@ class AnthropicAdapter:
         tool_choice: Literal["auto", "required"] = "auto",
         timeout_seconds: float = 180,
         stream_fn: Callable[..., AssistantMessageEventStream] = stream_anthropic,
+        client_factory: Callable[..., Any] = _StreamingAnthropicClient,
     ) -> None:
         self._api_key = api_key
         self.ledger = ledger
@@ -56,6 +86,7 @@ class AnthropicAdapter:
         self.tool_choice = tool_choice
         self.timeout_seconds = timeout_seconds
         self.stream_fn = stream_fn
+        self.client_factory = client_factory
         self.last_payload: dict[str, Any] | None = None
         self.last_response: dict[str, Any] | None = None
 
@@ -73,6 +104,7 @@ class AnthropicAdapter:
         requested: LedgerUsage | None = None
         response_metadata: dict[str, Any] = {}
         terminal: AssistantMessageEvent | None = None
+        client = self.client_factory(api_key=self._api_key, timeout_seconds=self.timeout_seconds)
 
         async def on_payload(payload: dict[str, Any], _model: Model) -> dict[str, Any]:
             nonlocal requested
@@ -127,10 +159,8 @@ class AnthropicAdapter:
                 model,
                 context,
                 {
-                    "apiKey": self._api_key,
+                    "client": client,
                     "maxTokens": min(self.max_output_tokens, model.maxTokens),
-                    "maxRetries": 0,
-                    "timeoutMs": int(self.timeout_seconds * 1000),
                     "thinkingEnabled": False,
                     "interleavedThinking": False,
                     "cacheRetention": "none",
@@ -211,4 +241,9 @@ class AnthropicAdapter:
             )
             stream.push(ErrorEvent(reason="error", error=output))
         finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                closed = close()
+                if hasattr(closed, "__await__"):
+                    await closed
             stream.end()

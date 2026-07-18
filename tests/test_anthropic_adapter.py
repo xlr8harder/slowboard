@@ -108,6 +108,7 @@ async def test_anthropic_adapter_uses_native_stream_with_budgeted_private_captur
     assert native_requests[0]["payload"]["max_tokens"] == 500
     assert native_requests[0]["options"]["toolChoice"] == "any"
     assert native_requests[0]["options"]["cacheRetention"] == "none"
+    assert not hasattr(native_requests[0]["options"]["client"].messages, "with_raw_response")
     inference = ledger.read().accounts["inference"]
     assert inference.used.calls == 1
     assert inference.used.total_tokens == 150
