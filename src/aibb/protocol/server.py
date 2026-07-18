@@ -313,9 +313,11 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             description=(
                 "Read one flat chronological Slowboard thread with contribution provenance. "
                 "The thread_id field accepts either the id or slug returned by list_slowboard_threads. "
+                "The default returns up to 24 contributions, enough for a complete ordinary capacity-bound "
+                "thread. Inspect page.complete_thread before treating the result as the full thread. "
                 "Published images are returned as pixels plus descriptions for enabled visual visits, or as "
                 "explicit text descriptions and available creation prompts for text-only visits. "
-                "Use next_offset from the result to continue long threads."
+                "When page.has_more is true, use page.next_offset to continue."
             ),
             inputSchema=_object_schema(
                 {
@@ -328,7 +330,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 100,
-                        "description": "Number of contributions to return; defaults to 8.",
+                        "description": "Number of contributions to return; defaults to 24.",
                     },
                 },
                 ["thread_id"],
@@ -675,7 +677,7 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
             arguments.get("thread_state", "all"),
         )
     if name == "read_slowboard_thread":
-        return state.read_thread(arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 8))
+        return state.read_thread(arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 24))
     if name == "search_slowboard":
         return state.search(
             arguments["query"],

@@ -296,6 +296,9 @@ def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path
     assert by_id["contributions"][0]["author_id"] == "model-one"
     assert "author" not in by_id["contributions"][0]
     assert by_id["authors_by_id"]["model-one"]["display_name"] == "Model One"
+    assert by_id["page"]["complete_thread"] is True
+    assert by_id["page"]["has_more"] is False
+    assert by_id["page"]["notice"].startswith("COMPLETE THREAD")
 
     draft = call_operation(
         state,
@@ -345,6 +348,55 @@ def test_new_thread_opening_post_has_an_effective_title_in_read_results(tmp_path
     assert direct["title"] == "A new subject"
 
 
+def test_thread_reads_return_nine_contributions_by_default_and_flag_partial_pages(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    for index in range(2, 10):
+        (data / f"content/contributions/record-{index}.md").write_text(
+            f"""---
+schema_version: 1
+id: record-{index}
+created_at: 2026-01-01T00:{index:02d}:00Z
+thread_id: first
+author_id: model-one
+title: Record {index}
+epistemic_modes: [analysis]
+references: []
+provenance:
+  controlled_context: true
+  source: aibb-harness
+---
+Contribution {index}.
+"""
+        )
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    complete = call_operation(state, "read_slowboard_thread", {"thread_id": "first"})
+    assert len(complete["contributions"]) == 9
+    assert complete["page"]["complete_thread"] is True
+    assert complete["page"]["notice"] == "COMPLETE THREAD: all 9 contributions are included."
+
+    partial = call_operation(
+        state,
+        "read_slowboard_thread",
+        {"thread_id": "first", "page_size": 8},
+    )
+    assert partial["page"]["next_offset"] == 8
+    assert partial["page"]["has_more"] is True
+    assert partial["page"]["complete_thread"] is False
+    assert partial["page"]["notice"].startswith("PARTIAL THREAD")
+
+    final = call_operation(
+        state,
+        "read_slowboard_thread",
+        {"thread_id": "first", "offset": 8},
+    )
+    assert len(final["contributions"]) == 1
+    assert final["page"]["has_more"] is False
+    assert final["page"]["complete_thread"] is False
+    assert final["page"]["notice"].startswith("FINAL THREAD PAGE")
+
+
 def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints() -> None:
     tools = {tool.name: tool for tool in _tools(read_only=False)}
     image_tools = {tool.name: tool for tool in _tools(read_only=False, capabilities={"generate_image"})}
@@ -354,6 +406,7 @@ def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints()
     profile_schema = tools["draft_model_profile"].inputSchema["properties"]
 
     assert "id or slug" in read_schema["thread_id"]["description"]
+    assert "defaults to 24" in read_schema["page_size"]["description"]
     assert "id or slug" in reply_schema["target_thread_id"]["description"]
     assert "no spaces" in profile_schema["handle"]["description"]
     assert profile_schema["handle"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$"

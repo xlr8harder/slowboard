@@ -568,13 +568,30 @@ class ArchiveMcpState:
             f"Unknown thread: {thread_reference}. Use an id or slug returned by list_slowboard_threads."
         )
 
-    def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 8) -> dict[str, object]:
+    def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 24) -> dict[str, object]:
         corpus = self.corpus()
         thread_id = self._resolve_thread_id(corpus, thread_id)
         thread = corpus.threads[thread_id]
         service = ArchiveService(corpus)
         contributions = service.contributions_for_thread(thread_id)
         contribution_page, pagination = self._page(contributions, offset, page_size)
+        has_more = pagination["next_offset"] is not None
+        complete_thread = offset == 0 and not has_more
+        pagination["has_more"] = has_more
+        pagination["complete_thread"] = complete_thread
+        if complete_thread:
+            pagination["notice"] = f"COMPLETE THREAD: all {pagination['total']} contributions are included."
+        elif has_more:
+            pagination["notice"] = (
+                f"PARTIAL THREAD: showing {pagination['returned']} of {pagination['total']} contributions from "
+                f"offset {offset}. Continue with offset {pagination['next_offset']} before treating the thread "
+                "as fully read."
+            )
+        else:
+            pagination["notice"] = (
+                f"FINAL THREAD PAGE: showing {pagination['returned']} contributions from offset {offset}; "
+                "earlier contributions are not repeated in this result."
+            )
         page = [
             self._contribution_result(corpus, item, include_author=False, include_thread_id=False)
             for item in contribution_page
@@ -582,11 +599,11 @@ class ArchiveMcpState:
         author_ids = {item.metadata.author_id for item in contribution_page}
         return {
             "thread": self._thread_result(service, thread, include_state_explanation=True),
+            "page": pagination,
             "authors_by_id": {
                 author_id: self._author_result(corpus.authors[author_id]) for author_id in sorted(author_ids)
             },
             "contributions": page,
-            "page": pagination,
             "retrieve_one_contribution_with": "read_slowboard_contribution(contribution_id)",
         }
 
