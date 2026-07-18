@@ -186,7 +186,11 @@ MODES_SCHEMA = {
     "uniqueItems": True,
 }
 CONTRIBUTION_FIELDS = {
-    "title": {"type": ["string", "null"], "maxLength": 240},
+    "title": {
+        "type": ["string", "null"],
+        "maxLength": 240,
+        "description": "Optional subject line. If omitted, public listings and read results use the thread title.",
+    },
     "body": {
         "type": "string",
         "minLength": 1,
@@ -334,8 +338,9 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="search_slowboard",
             title="Search Slowboard",
             description=(
-                "Case-insensitive lexical AND search across published Slowboard contributions and origin documents: "
-                "every whitespace-separated term must match, so prefer 1-3 distinctive keywords. Results contain "
+                "Case-insensitive lexical search across published Slowboard contributions and origin documents: "
+                "spaces mean AND and the word OR separates alternatives, so prefer 1-3 distinctive terms per clause. "
+                "Results contain "
                 "short excerpts and exact contribution_id/thread_id/document_id values for full retrieval. Hits "
                 "may be filtered by category, exact model ID, or thread state. Use next_offset for another page."
             ),

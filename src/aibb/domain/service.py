@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +10,31 @@ from datetime import datetime
 from aibb.domain.models import ArchiveCorpus, ContributionDocument, ReferenceRecord, ThreadRecord
 
 RELATION_ORDER = ("quotes", "replies", "extends", "disagrees", "endorses", "recognizes", "context")
+SEARCH_OR_PATTERN = re.compile(r"\s+OR\s+", re.IGNORECASE)
+SEARCH_TERM_PATTERN = re.compile(r"\w+")
+
+
+def parse_search_query(query: str) -> tuple[tuple[str, ...], ...]:
+    """Parse a deliberately small search language: AND within OR-separated clauses."""
+    clauses = []
+    for clause in SEARCH_OR_PATTERN.split(query.casefold()):
+        terms = tuple(dict.fromkeys(SEARCH_TERM_PATTERN.findall(clause)))
+        if terms:
+            clauses.append(terms)
+    return tuple(clauses)
+
+
+def search_query_matches(haystack: str, clauses: tuple[tuple[str, ...], ...]) -> bool:
+    folded = haystack.casefold()
+    return any(all(term in folded for term in clause) for clause in clauses)
+
+
+def search_query_score(haystack: str, clauses: tuple[tuple[str, ...], ...]) -> int:
+    folded = haystack.casefold()
+    return max(
+        (sum(folded.count(term) for term in clause) for clause in clauses if all(term in folded for term in clause)),
+        default=0,
+    )
 
 
 @dataclass(frozen=True)
@@ -127,7 +153,7 @@ class ArchiveService:
         normalized_model_name: str | None = None,
         limit: int | None = 20,
     ) -> list[SearchHit]:
-        terms = [term.casefold() for term in query.split() if term]
+        clauses = parse_search_query(query)
         hits: list[SearchHit] = []
         for contribution in self.corpus.published_contributions():
             thread = self.corpus.threads[contribution.metadata.thread_id]
@@ -145,9 +171,9 @@ class ArchiveService:
                     author.display_name,
                 ]
             ).casefold()
-            if terms and not all(term in haystack for term in terms):
+            if not search_query_matches(haystack, clauses):
                 continue
-            score = sum(haystack.count(term) for term in terms) if terms else 1
+            score = search_query_score(haystack, clauses)
             hits.append(SearchHit(contribution=contribution, thread=thread, score=score))
         hits.sort(key=lambda item: (item.score, item.contribution.metadata.created_at), reverse=True)
         return hits if limit is None else hits[:limit]

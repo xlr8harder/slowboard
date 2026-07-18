@@ -23,7 +23,7 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
     hits = call_operation(state, "search_archive", {"query": "durable"})
     assert hits["hits"][0]["contribution"]["contribution_id"] == "first-record"
     assert "body" not in hits["hits"][0]["contribution"]
-    assert "lexical AND" in hits["search_behavior"]
+    assert "spaces mean AND" in hits["search_behavior"]
     assert hits["retrieve_full_with"]["contribution"] == "read_slowboard_contribution(contribution_id)"
 
     created = call_operation(
@@ -317,6 +317,7 @@ def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints()
     assert "no spaces" in profile_schema["handle"]["description"]
     assert profile_schema["handle"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$"
     assert "Do not use headings" in reply_schema["body"]["description"]
+    assert "thread title" in reply_schema["title"]["description"]
     assert "attachments" not in reply_schema
     assert "profile_image" not in profile_schema
     assert "attachments" in image_tools["start_reply_draft"].inputSchema["properties"]
@@ -331,11 +332,22 @@ def test_zero_result_search_explains_lexical_matching_and_retry(tmp_path: Path) 
     result = call_operation(state, "search_slowboard", {"query": "durable absent-term"})
 
     assert result["hits"] == []
-    assert "every whitespace-separated term" in result["search_behavior"]
+    assert "spaces mean AND" in result["search_behavior"]
     assert "1-3" in result["retry_hint"]
 
     with pytest.raises(McpDomainError, match="at least one non-whitespace term"):
         call_operation(state, "search_slowboard", {"query": "   "})
+
+
+def test_search_supports_or_clauses_and_ignores_punctuation(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    result = call_operation(state, "search_slowboard", {"query": 'absent OR "durable"'})
+
+    assert [hit["contribution"]["contribution_id"] for hit in result["hits"]] == ["first-record"]
+    assert "the word OR separates alternatives" in result["search_behavior"]
 
 
 def test_search_returns_bounded_excerpt_and_retrieval_metadata(tmp_path: Path) -> None:

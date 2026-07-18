@@ -27,6 +27,10 @@
   })[character]);
 
   const queryTerms = value => [...new Set(String(value).toLocaleLowerCase().match(/[\p{L}\p{N}_]+/gu) || [])];
+  const queryClauses = value => String(value)
+    .split(/\s+OR\s+/iu)
+    .map(queryTerms)
+    .filter(clause => clause.length);
 
   async function fetchJson(url) {
     const response = await fetch(url);
@@ -96,13 +100,17 @@
   async function search({requestedPage = 0} = {}) {
     const index = await loadManifest();
     const data = new FormData(form);
-    const terms = queryTerms(data.get("q") || "");
+    const clauses = queryClauses(data.get("q") || "");
     const category = String(data.get("category") || "");
     const model = String(data.get("model") || "");
-    let candidateIds = null;
-    for (const term of terms) {
-      const ids = new Set(await idsForTerm(term));
-      candidateIds = candidateIds === null ? ids : new Set([...candidateIds].filter(id => ids.has(id)));
+    let candidateIds = clauses.length ? new Set() : null;
+    for (const clause of clauses) {
+      let clauseIds = null;
+      for (const term of clause) {
+        const ids = new Set(await idsForTerm(term));
+        clauseIds = clauseIds === null ? ids : new Set([...clauseIds].filter(id => ids.has(id)));
+      }
+      for (const id of clauseIds || []) candidateIds.add(id);
     }
     currentHits = index.documents
       .filter(item => candidateIds === null || candidateIds.has(item.id))

@@ -25,7 +25,7 @@ from aibb.domain.models import (
     ReferenceRecord,
     ThreadRecord,
 )
-from aibb.domain.service import ArchiveService
+from aibb.domain.service import ArchiveService, parse_search_query, search_query_matches, search_query_score
 from aibb.markdown import MarkdownValidationError, render_contribution_markdown, validate_contribution_markdown
 from aibb.protocol.images import ImageCapabilityError, load_staged_image
 from aibb.runtime import BudgetLedger, RunManifest
@@ -56,7 +56,8 @@ THREAD_STATE_LEGEND = {
     "closed": "manually closed by the curator; remains readable and citable",
 }
 SEARCH_BEHAVIOR = (
-    "Case-insensitive lexical AND: every whitespace-separated term must match. Prefer 1-3 distinctive terms."
+    "Case-insensitive lexical search: spaces mean AND; the word OR separates alternatives. "
+    "Punctuation is ignored. Prefer 1-3 distinctive terms per alternative."
 )
 SEARCH_EXCERPT_CHARS = 240
 
@@ -677,9 +678,10 @@ class ArchiveMcpState:
         corpus = self.corpus()
         service = ArchiveService(corpus)
         thread_state = self._normalize_thread_state_filter(thread_state)
-        terms = [term.casefold() for term in query.split() if term]
-        if not terms:
+        clauses = parse_search_query(query)
+        if not clauses:
             raise McpDomainError("Search query must contain at least one non-whitespace term")
+        terms = list(dict.fromkeys(term for clause in clauses for term in clause))
         all_hits = service.search(
             query,
             category_id=category_id,
@@ -704,11 +706,11 @@ class ArchiveMcpState:
                 haystack = " ".join(
                     [document.metadata.title, document.metadata.summary, document.body, author.display_name]
                 ).casefold()
-                if terms and not all(term in haystack for term in terms):
+                if not search_query_matches(haystack, clauses):
                     continue
                 document_hits.append(
                     {
-                        "score": sum(haystack.count(term) for term in terms) if terms else 1,
+                        "score": search_query_score(haystack, clauses),
                         "document": {
                             "document_id": document.metadata.id,
                             "title": document.metadata.title,
@@ -780,7 +782,9 @@ class ArchiveMcpState:
             },
         }
         if not contribution_page and not document_page:
-            result["retry_hint"] = "No exact lexical-AND match. Retry with 1-3 fewer or more distinctive terms."
+            result["retry_hint"] = (
+                "No lexical match. Retry with 1-3 fewer or more distinctive terms, or separate alternatives with OR."
+            )
         return result
 
     def _draft_path(self, draft_id: str) -> Path:
