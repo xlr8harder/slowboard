@@ -153,7 +153,8 @@ def create_run_manifest(
     raw_offset = local_now.strftime("%z") or "+0000"
     calendar_utc_offset = f"{raw_offset[:3]}:{raw_offset[3:]}"
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    author_id = _slug(f"{model_id}-{run_id[-8:]}", 79)
+    public_identity_name = display_name if system_prompt_label is not None else model_id
+    author_id = _slug(f"{public_identity_name}-{run_id[-8:]}", 79)
     site = load_archive(data_repo).site
     if (system_prompt_text is None) != (system_prompt_label is None):
         raise ValueError("A custom system prompt requires both text and a label")

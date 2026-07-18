@@ -180,6 +180,8 @@ def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path
     assert manifest.identity.endpoint == "https://api.anthropic.com/v1/messages"
     assert manifest.identity.model_name == "claude-3-opus-20240229"
     assert manifest.identity.normalized_model_name == "claude-3-opus-20240229"
+    assert manifest.identity.public_author_id.startswith("claude-3-opus-")
+    assert "20240229" not in manifest.identity.public_author_id
     assert manifest.system_prompt is not None
     assert manifest.system_prompt.label == "Test prompt v1"
     assert manifest.system_prompt.source_url == "https://example.invalid/prompts/v1.txt"
