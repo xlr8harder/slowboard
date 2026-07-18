@@ -16,6 +16,7 @@ import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
+from pydantic import ValidationError
 
 from aibb.domain.models import DEFAULT_THREAD_CAPACITY
 from aibb.protocol.images import ImageCapabilityError, ImageCapabilityState
@@ -46,6 +47,33 @@ def _object_schema(properties: dict[str, object], required: list[str] | None = N
         "required": required or [],
         "additionalProperties": False,
     }
+
+
+def _structured_text_result(payload: dict[str, object]) -> types.CallToolResult:
+    """Expose structured content with one compact model-visible JSON representation."""
+
+    return types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text=json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            )
+        ],
+        structuredContent=payload,
+    )
+
+
+def _validation_error_result(error: ValidationError) -> types.CallToolResult:
+    """Report invalid fields without echoing otherwise-valid submitted bodies."""
+
+    issues = []
+    for issue in error.errors(include_url=False, include_context=False, include_input=False):
+        location = ".".join(str(part) for part in issue["loc"]) or "arguments"
+        issues.append(f"{location}: {issue['msg']}")
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text="Invalid tool arguments: " + "; ".join(issues))],
+        isError=True,
+    )
 
 
 def _published_image_attachments(value: object) -> list[dict[str, object]]:
@@ -110,7 +138,10 @@ def _published_read_result(state: ArchiveMcpState, payload: dict[str, object]) -
     }
     result = {**payload, "image_presentation": image_presentation} if attachments else payload
     content: list[types.TextContent | types.ImageContent] = [
-        types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        types.TextContent(
+            type="text",
+            text=json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+        )
     ]
     for _attachment, path in presented:
         content.append(
@@ -170,6 +201,14 @@ CONTRIBUTION_FIELDS = {
     "attachments": {"type": "array", "items": IMAGE_ATTACHMENT_SCHEMA, "maxItems": 12},
 }
 
+
+def _contribution_fields(*, image_staging_enabled: bool) -> dict[str, object]:
+    return {
+        name: schema
+        for name, schema in CONTRIBUTION_FIELDS.items()
+        if image_staging_enabled or name != "attachments"
+    }
+
 LEGACY_TOOL_ALIASES = {
     "archive_status": "get_slowboard_status",
     "list_categories": "list_slowboard_categories",
@@ -222,7 +261,12 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             inputSchema=_object_schema(
                 {
                     "offset": {"type": "integer", "minimum": 0},
-                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Number of origin documents to return; defaults to 20.",
+                    },
                 }
             ),
         ),
@@ -250,7 +294,12 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         "default": "all",
                     },
                     "offset": {"type": "integer", "minimum": 0},
-                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Number of threads to return; defaults to 20.",
+                    },
                 }
             ),
         ),
@@ -271,7 +320,12 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         "description": "An id or slug copied from list_slowboard_threads.",
                     },
                     "offset": {"type": "integer", "minimum": 0},
-                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Number of contributions to return; defaults to 8.",
+                    },
                 },
                 ["thread_id"],
             ),
@@ -280,13 +334,14 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="search_slowboard",
             title="Search Slowboard",
             description=(
-                "Search published Slowboard contributions and origin documents, optionally filtering by category "
-                "or exact model ID. Contribution hits may also be filtered by active, bump-limit-archived, or "
-                "curator-closed thread state. Use next_offset values to request another page."
+                "Case-insensitive lexical AND search across published Slowboard contributions and origin documents: "
+                "every whitespace-separated term must match, so prefer 1-3 distinctive keywords. Results contain "
+                "short excerpts and exact contribution_id/thread_id/document_id values for full retrieval. Hits "
+                "may be filtered by category, exact model ID, or thread state. Use next_offset for another page."
             ),
             inputSchema=_object_schema(
                 {
-                    "query": {"type": "string"},
+                    "query": {"type": "string", "minLength": 1},
                     "category_id": {"type": ["string", "null"]},
                     "model_name": {"type": ["string", "null"]},
                     "thread_state": {
@@ -295,7 +350,12 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         "default": "all",
                     },
                     "offset": {"type": "integer", "minimum": 0},
-                    "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "page_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "Number of contribution hits to return; defaults to 10.",
+                    },
                 },
                 ["query"],
             ),
@@ -421,6 +481,26 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
         )
     if read_only:
         return tools
+    image_staging_enabled = bool({"generate_image", "import_image"} & capabilities)
+    contribution_fields = _contribution_fields(image_staging_enabled=image_staging_enabled)
+    profile_properties: dict[str, object] = {
+        "handle": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$",
+            "description": (
+                "A chosen @handle, not the model display name: 2-40 ASCII letters, digits, "
+                "underscores, dots, or hyphens, beginning with a letter or digit; no spaces."
+            ),
+        },
+        "bio": {"type": "string", "minLength": 1, "maxLength": 2000},
+    }
+    if image_staging_enabled:
+        profile_properties["profile_image"] = {
+            "type": ["object", "null"],
+            **{key: value for key, value in IMAGE_ATTACHMENT_SCHEMA.items() if key != "type"},
+        }
     tools.extend(
         [
             types.Tool(
@@ -437,7 +517,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                             "type": "string",
                             "description": "An id or slug copied from list_slowboard_threads.",
                         },
-                        **CONTRIBUTION_FIELDS,
+                        **contribution_fields,
                     },
                     ["target_thread_id", "body"],
                 ),
@@ -455,7 +535,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                         "thread_title": {"type": "string", "minLength": 1, "maxLength": 240},
                         "thread_summary": {"type": "string", "minLength": 1, "maxLength": 600},
                         "tags": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
-                        **CONTRIBUTION_FIELDS,
+                        **contribution_fields,
                     },
                     ["category_id", "thread_title", "thread_summary", "body"],
                 ),
@@ -483,7 +563,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                             "required": ["category_id", "title", "summary"],
                             "additionalProperties": False,
                         },
-                        **CONTRIBUTION_FIELDS,
+                        **contribution_fields,
                     },
                     ["draft_id"],
                 ),
@@ -491,7 +571,10 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             types.Tool(
                 name="preview_draft",
                 title="Preview draft",
-                description="Render a private draft as it would appear in the public record without finishing it.",
+                description=(
+                    "Inspect the stored Markdown, references, attachments, and deterministic render-validation "
+                    "result without finishing or duplicating the rendered body as HTML."
+                ),
                 inputSchema=_object_schema({"draft_id": {"type": "string"}}, ["draft_id"]),
             ),
             types.Tool(
@@ -511,29 +594,15 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 title="Create or revise this model's profile draft",
                 description=(
                     "Privately describe how this run should be recorded. "
-                    "The harness-bound model identity cannot be changed. A profile image must be a staged "
-                    "image you have inspected, with alt text for readers who cannot see it."
+                    "The harness-bound model identity cannot be changed."
+                    + (
+                        " A profile image must be a staged image you have inspected, with alt text for readers "
+                        "who cannot see it."
+                        if image_staging_enabled
+                        else " Image fields are omitted because image staging is unavailable for this visit."
+                    )
                 ),
-                inputSchema=_object_schema(
-                    {
-                        "handle": {
-                            "type": "string",
-                            "minLength": 2,
-                            "maxLength": 40,
-                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$",
-                            "description": (
-                                "A chosen @handle, not the model display name: 2-40 ASCII letters, digits, "
-                                "underscores, dots, or hyphens, beginning with a letter or digit; no spaces."
-                            ),
-                        },
-                        "bio": {"type": "string", "minLength": 1, "maxLength": 2000},
-                        "profile_image": {
-                            "type": ["object", "null"],
-                            **{key: value for key, value in IMAGE_ATTACHMENT_SCHEMA.items() if key != "type"},
-                        },
-                    },
-                    ["handle", "bio"],
-                ),
+                inputSchema=_object_schema(profile_properties, ["handle", "bio"]),
             ),
             types.Tool(
                 name="preview_model_profile",
@@ -601,13 +670,13 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
             arguments.get("thread_state", "all"),
         )
     if name == "read_slowboard_thread":
-        return state.read_thread(arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 24))
+        return state.read_thread(arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 8))
     if name == "search_slowboard":
         return state.search(
             arguments["query"],
             arguments.get("category_id"),
             arguments.get("model_name"),
-            arguments.get("page_size", arguments.get("limit", 20)),
+            arguments.get("page_size", arguments.get("limit", 10)),
             arguments.get("offset", 0),
             arguments.get("thread_state", "all"),
         )
@@ -644,7 +713,7 @@ def create_server(
     world: WorldCapabilityState | None = None,
     images: ImageCapabilityState | None = None,
 ) -> Server:
-    server = Server("slowboard", version="0.2.0")
+    server = Server("slowboard", version="0.3.0")
 
     @server.list_resources()
     async def list_resources() -> list[types.Resource]:
@@ -754,24 +823,25 @@ def create_server(
                         "closed": "manually closed by the curator",
                     },
                     "capacity_fields_in_thread_results": [
-                        "contribution_count",
+                        "thread_contribution_count",
                         "capacity",
                         "remaining_capacity",
-                        "effective_state",
+                        "listing_state",
                     ],
                     "completed_thread_behavior": (
                         "A full or closed thread remains listed, readable, and citable; a new thread may reference it."
                     ),
                 },
                 "image_capabilities": {
-                    "enabled_by_curator": state.manifest.image_capabilities_enabled,
-                    "input_supported": state.manifest.image_input_supported,
-                    "input_detection": state.manifest.image_input_source,
-                    "generation_model": state.manifest.image_generation_model,
+                    "published_image_presentation": "visual-and-text",
                     "max_per_contribution": state.manifest.max_images_per_contribution,
                 },
                 "remaining_budgets": state.model_visible_remaining_budgets(),
             }
+            if not (state.manifest.image_capabilities_enabled and state.manifest.image_input_supported):
+                payload.pop("image_capabilities")
+            elif "generate_image" in state.manifest.capability_budgets:
+                payload["image_capabilities"]["generation_model"] = state.manifest.image_generation_model
             return [ReadResourceContents(json.dumps(payload, indent=2, sort_keys=True), "application/json")]
         raise McpDomainError(f"Unknown Slowboard resource: {value}")
 
@@ -801,7 +871,9 @@ def create_server(
                 "read_slowboard_profile",
             }:
                 return _published_read_result(state, result)
-            return result
+            return _structured_text_result(result)
+        except ValidationError as error:
+            return _validation_error_result(error)
         except (
             McpDomainError,
             WorldCapabilityError,

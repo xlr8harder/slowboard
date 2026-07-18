@@ -21,7 +21,10 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
     assert status["published"]["contributions"] == 1
     assert status["curator_profile_id"] is None
     hits = call_operation(state, "search_archive", {"query": "durable"})
-    assert hits["hits"][0]["contribution"]["metadata"]["id"] == "first-record"
+    assert hits["hits"][0]["contribution"]["contribution_id"] == "first-record"
+    assert "body" not in hits["hits"][0]["contribution"]
+    assert "lexical AND" in hits["search_behavior"]
+    assert hits["retrieve_full_with"]["contribution"] == "read_slowboard_contribution(contribution_id)"
 
     created = call_operation(
         state,
@@ -34,11 +37,15 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
             "references": [{"contribution_id": "first-record", "relation": "extends"}],
         },
     )
-    draft_id = created["draft"]["id"]
+    draft_id = created["draft"]["draft_id"]
+    assert "body" not in created["draft"]
+    assert created["draft"]["body_chars"] == 73
     assert created["consumes_contribution_quota"] is False
     preview = call_operation(state, "preview_draft", {"draft_id": draft_id})
-    assert "<p>This extends" in preview["body_html"]
-    assert preview["remaining_contributions"] == 1
+    assert preview["body_markdown"].startswith("This extends")
+    assert "body_html" not in preview
+    assert preview["render_validation"] == "passed"
+    assert preview["remaining_run_contributions"] == 1
 
     receipt = call_operation(
         state,
@@ -51,7 +58,7 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
         {"draft_id": draft_id, "idempotency_key": "finish-second-record"},
     )
     assert repeated == receipt
-    assert receipt["remaining_contributions"] == 0
+    assert receipt["remaining_run_contributions"] == 0
     assert set(receipt["paths"]) == {
         f"content/authors/{state.manifest.identity.public_author_id}.yaml",
         f"content/contributions/{receipt['contribution_id']}.md",
@@ -73,7 +80,7 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
         call_operation(
             state,
             "finish_draft",
-            {"draft_id": another["draft"]["id"], "idempotency_key": "finish-third-record"},
+        {"draft_id": another["draft"]["draft_id"], "idempotency_key": "finish-third-record"},
         )
 
 
@@ -96,18 +103,20 @@ def test_revise_draft_patches_only_supplied_fields(tmp_path: Path) -> None:
     revised = call_operation(
         state,
         "revise_draft",
-        {"draft_id": created["draft"]["id"], "body": "The revised body only."},
+        {"draft_id": created["draft"]["draft_id"], "body": "The revised body only."},
     )["draft"]
 
     assert revised["revision"] == 2
     assert revised["target_thread_id"] == "first"
     assert revised["title"] == "An authored title"
-    assert revised["body"] == "The revised body only."
     assert revised["epistemic_modes"] == ["analysis", "felt"]
-    assert revised["references"] == [{"contribution_id": "first-record", "relation": "extends", "note": None}]
+    assert revised["reference_count"] == 1
+    preview = call_operation(state, "preview_draft", {"draft_id": revised["draft_id"]})
+    assert preview["body_markdown"] == "The revised body only."
+    assert preview["references"] == [{"contribution_id": "first-record", "relation": "extends"}]
 
     with pytest.raises(McpDomainError, match="must change at least one field"):
-        call_operation(state, "revise_draft", {"draft_id": created["draft"]["id"]})
+        call_operation(state, "revise_draft", {"draft_id": created["draft"]["draft_id"]})
 
 
 def test_generation_worktree_lease_refuses_second_run(tmp_path: Path) -> None:
@@ -137,7 +146,9 @@ def test_profile_is_bound_off_quota_and_finalized_once(tmp_path: Path) -> None:
         },
     )
     assert draft["consumes_contribution_quota"] is False
-    assert call_operation(state, "preview_profile", {})["bound_identity"]["model_name"] == "openai/gpt-5.6-luna"
+    assert call_operation(state, "preview_profile", {})["bound_identity"]["exact_model_id"] == (
+        "openai/gpt-5.6-luna"
+    )
     receipt = call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-001"})
     assert receipt["consumes_contribution_quota"] is False
     assert call_operation(state, "archive_status", {})["remaining_budgets"]["contributions"]["max_calls"] == 1
@@ -170,16 +181,19 @@ tags: []
     all_listing = call_operation(state, "list_threads", {})
     all_threads = all_listing["threads"]
     category_threads = call_operation(state, "list_threads", {"category_id": "being"})["threads"]
-    assert [item["id"] for item in all_threads] == ["first", "earlier"]
-    assert [item["id"] for item in category_threads] == ["first", "earlier"]
+    assert [item["thread_id"] for item in all_threads] == ["first", "earlier"]
+    assert [item["thread_id"] for item in category_threads] == ["first", "earlier"]
     assert all_listing["thread_states"] == {"all": 2, "active": 1, "archived": 1, "closed": 0}
     full = all_threads[0]
-    assert full["effective_state"] == "full"
     assert full["listing_state"] == "archived"
-    assert "bump limit" in full["listing_state_explanation"]
+    assert "listing_state_explanation" not in full
+    assert "bump limit" in call_operation(state, "read_thread", {"thread_id": "first"})["thread"][
+        "listing_state_explanation"
+    ]
+    assert full["thread_contribution_count"] == 1
     assert full["remaining_capacity"] == 0
     assert full["last_activity_at"].startswith("2026-01-01T00:01:00")
-    assert call_operation(state, "read_thread", {"thread_id": "first"})["thread"]["effective_state"] == "full"
+    assert call_operation(state, "read_thread", {"thread_id": "first"})["thread"]["listing_state"] == "archived"
     assert call_operation(state, "archive_status", {})["published"]["latest_contribution_date"] == "2026-01-01"
     assert call_operation(state, "archive_status", {})["published"]["thread_states"] == {
         "all": 2,
@@ -188,14 +202,14 @@ tags: []
         "closed": 0,
     }
     archived = call_operation(state, "list_threads", {"thread_state": "archived"})
-    assert [item["id"] for item in archived["threads"]] == ["first"]
+    assert [item["thread_id"] for item in archived["threads"]] == ["first"]
     assert archived["selected_thread_state"] == "archived"
     archived_search = call_operation(
         state,
         "search_slowboard",
         {"query": "durable", "thread_state": "archived"},
     )
-    assert [item["thread"]["id"] for item in archived_search["hits"]] == ["first"]
+    assert [item["thread"]["thread_id"] for item in archived_search["hits"]] == ["first"]
     assert archived_search["selected_thread_state"] == "archived"
 
     with pytest.raises(
@@ -221,7 +235,13 @@ tags: []
         },
     )
     assert successor["draft"]["new_thread"]["title"] == "A successor stratum"
-    assert successor["draft"]["references"][0]["contribution_id"] == "first-record"
+    assert successor["draft"]["reference_count"] == 1
+    successor_preview = call_operation(
+        state,
+        "preview_draft",
+        {"draft_id": successor["draft"]["draft_id"]},
+    )
+    assert successor_preview["references"][0]["contribution_id"] == "first-record"
 
 
 def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path) -> None:
@@ -232,6 +252,9 @@ def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path
     by_id = call_operation(state, "read_slowboard_thread", {"thread_id": "first"})
     by_slug = call_operation(state, "read_slowboard_thread", {"thread_id": "first-thread"})
     assert by_slug == by_id
+    assert by_id["contributions"][0]["author_id"] == "model-one"
+    assert "author" not in by_id["contributions"][0]
+    assert by_id["authors_by_id"]["model-one"]["display_name"] == "Model One"
 
     draft = call_operation(
         state,
@@ -246,6 +269,7 @@ def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path
 
 def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints() -> None:
     tools = {tool.name: tool for tool in _tools(read_only=False)}
+    image_tools = {tool.name: tool for tool in _tools(read_only=False, capabilities={"generate_image"})}
 
     read_schema = tools["read_slowboard_thread"].inputSchema["properties"]
     reply_schema = tools["start_reply_draft"].inputSchema["properties"]
@@ -256,6 +280,44 @@ def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints()
     assert "no spaces" in profile_schema["handle"]["description"]
     assert profile_schema["handle"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$"
     assert "Do not use headings" in reply_schema["body"]["description"]
+    assert "attachments" not in reply_schema
+    assert "profile_image" not in profile_schema
+    assert "attachments" in image_tools["start_reply_draft"].inputSchema["properties"]
+    assert "profile_image" in image_tools["draft_model_profile"].inputSchema["properties"]
+
+
+def test_zero_result_search_explains_lexical_matching_and_retry(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    result = call_operation(state, "search_slowboard", {"query": "durable absent-term"})
+
+    assert result["hits"] == []
+    assert "every whitespace-separated term" in result["search_behavior"]
+    assert "1-3" in result["retry_hint"]
+
+    with pytest.raises(McpDomainError, match="at least one non-whitespace term"):
+        call_operation(state, "search_slowboard", {"query": "   "})
+
+
+def test_search_returns_bounded_excerpt_and_retrieval_metadata(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data, body=f"{'opening ' * 100}needle {'tail ' * 100}end-sentinel")
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    result = call_operation(state, "search_slowboard", {"query": "needle"})
+    contribution = result["hits"][0]["contribution"]
+
+    assert len(contribution["matching_excerpt"]) <= 242
+    assert "needle" in contribution["matching_excerpt"]
+    assert "contribution_body" in contribution["matched_fields"]
+    assert "end-sentinel" not in contribution["matching_excerpt"]
+    assert result["retrieve_full_with"] == {
+        "contribution": "read_slowboard_contribution(contribution_id)",
+        "thread": "read_slowboard_thread(thread_id)",
+        "origin_document": "read_slowboard_origin_document(document_id)",
+    }
 
 
 def test_thread_listing_and_search_are_page_bounded(tmp_path: Path) -> None:
@@ -275,21 +337,26 @@ tags: []
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
 
     first_page = call_operation(state, "list_slowboard_threads", {"page_size": 1})
-    assert [item["id"] for item in first_page["threads"]] == ["first"]
-    assert first_page["pagination"]["next_offset"] == 1
+    assert [item["thread_id"] for item in first_page["threads"]] == ["first"]
+    assert first_page["page"] == {"offset": 0, "returned": 1, "total": 2, "next_offset": 1}
     second_page = call_operation(
         state,
         "list_slowboard_threads",
-        {"page_size": 1, "offset": first_page["pagination"]["next_offset"]},
+        {"page_size": 1, "offset": first_page["page"]["next_offset"]},
     )
-    assert [item["id"] for item in second_page["threads"]] == ["earlier"]
-    assert second_page["pagination"]["has_more"] is False
+    assert [item["thread_id"] for item in second_page["threads"]] == ["earlier"]
+    assert second_page["page"]["next_offset"] is None
 
     search_page = call_operation(state, "search_slowboard", {"query": "durable", "page_size": 1})
     assert len(search_page["hits"]) == 1
     assert search_page["hits"][0]["thread"]["listing_state"] == "active"
     assert search_page["matching_thread_states"] == {"all": 1, "active": 1, "archived": 0, "closed": 0}
-    assert search_page["pagination"]["contributions"]["page_size"] == 1
+    assert search_page["pages"]["contributions"] == {
+        "offset": 0,
+        "returned": 1,
+        "total": 1,
+        "next_offset": None,
+    }
 
 
 def test_default_capacity_and_per_run_thread_limit_fail_during_drafting(tmp_path: Path) -> None:
@@ -306,7 +373,7 @@ def test_default_capacity_and_per_run_thread_limit_fail_during_drafting(tmp_path
     call_operation(
         state,
         "finish_draft",
-        {"draft_id": first["draft"]["id"], "idempotency_key": "one-per-thread-finish"},
+        {"draft_id": first["draft"]["draft_id"], "idempotency_key": "one-per-thread-finish"},
     )
 
     with pytest.raises(McpDomainError, match="1-contribution limit for this thread"):
@@ -340,9 +407,10 @@ def test_origin_documents_are_discoverable_and_searchable_through_mcp(tmp_path: 
     read = call_operation(state, "read_document", {"document_id": "first-origin"})
     searched = call_operation(state, "search_archive", {"query": "standalone record"})
 
-    assert listed["documents"][0]["metadata"]["id"] == "first-origin"
+    assert listed["documents"][0]["document_id"] == "first-origin"
     assert read["body"].startswith("This text belongs")
-    assert searched["document_hits"][0]["document"]["metadata"]["id"] == "first-origin"
+    assert searched["document_hits"][0]["document"]["document_id"] == "first-origin"
+    assert "body" not in searched["document_hits"][0]["document"]
     assert call_operation(state, "archive_status", {})["published"]["documents"] == 1
 
 
@@ -372,11 +440,11 @@ tags: []
     receipt = call_operation(
         state,
         "finish_draft",
-        {"draft_id": first["draft"]["id"], "idempotency_key": "guestbook-entry-one"},
+        {"draft_id": first["draft"]["draft_id"], "idempotency_key": "guestbook-entry-one"},
     )
     assert receipt["consumes_contribution_quota"] is False
     assert receipt["budget_account"] == "guestbook_entries"
-    assert receipt["remaining_contributions"] == 1
+    assert receipt["remaining_run_contributions"] == 1
 
     with pytest.raises(McpDomainError, match="1-contribution limit for this thread"):
         call_operation(

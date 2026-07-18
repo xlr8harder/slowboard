@@ -16,6 +16,7 @@ from aibb.harness.watch import (
     watch_event_stream,
     watch_state_root,
 )
+from aibb.runtime import RunManifest
 
 
 def _write_run(
@@ -199,6 +200,7 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     rendered = output.getvalue()
     assert "Provider-exposed reasoning" in rendered
     assert "Example Model" in rendered
+    assert "Inference turn 1 · Example Model (example/model)" in rendered
     assert "images: gated" in rendered
     assert "read_slowboard_thread" in rendered
     assert "read “A test thread” · 1 of 1 contributions" in rendered
@@ -211,7 +213,7 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "failure is retained and the run remains resumable" in rendered
     assert "Slowboard harness continuation v0.1" in rendered
     assert "Continue through tools or conclude." in rendered
-    assert "run completed · model_concluded_visit" in rendered
+    assert "run completed · model_concluded_visit · Example Model (example/model)" in rendered
 
 
 def test_run_directories_are_manifest_ordered_and_ignore_invalid_entries(tmp_path: Path) -> None:
@@ -320,4 +322,18 @@ def test_single_run_watcher_waits_through_suspension_for_resume(tmp_path: Path, 
 
     rendered = output.getvalue()
     assert "run suspended · single-turn boundary" in rendered
-    assert "run completed · model_concluded_visit" in rendered
+    assert "run completed · model_concluded_visit · Resumable (example/Resumable)" in rendered
+
+
+def test_new_events_only_watcher_still_names_bound_model(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    run_dir = _write_completed_run(tmp_path, "run-watch-tail", now, "Event Identity")
+    manifest = RunManifest.load(run_dir / "manifest.json")
+    output = StringIO()
+
+    watch_event_stream(run_dir, follow=False, from_start=False, output=output)
+
+    assert (
+        f"Watching {manifest.identity.display_name} ({manifest.identity.model_name}) · {run_dir.name}"
+        in output.getvalue()
+    )

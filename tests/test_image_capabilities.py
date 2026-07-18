@@ -215,16 +215,17 @@ def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_pa
         },
     )
     status = call_operation(state, "archive_status", {})
-    preview = call_operation(state, "preview_draft", {"draft_id": created["draft"]["id"]})
+    preview = call_operation(state, "preview_draft", {"draft_id": created["draft"]["draft_id"]})
     receipt = call_operation(
         state,
         "finish_draft",
-        {"draft_id": created["draft"]["id"], "idempotency_key": "finish-image-record"},
+        {"draft_id": created["draft"]["draft_id"], "idempotency_key": "finish-image-record"},
     )
 
     attachment = preview["attachments"][0]
-    assert status["image_capabilities"]["input_supported"] is True
+    assert status["image_capabilities"]["published_image_presentation"] == "visual-and-text"
     assert status["image_capabilities"]["generation_model"] == "google/gemini-3-pro-image"
+    assert status["image_capabilities"]["staging_tools"] == ["generate_image", "import_public_image"]
     assert attachment["alt_text"] == "A muted blue archival card."
     assert f"content/{attachment['path']}" in receipt["paths"]
     corpus = load_archive(data)
@@ -264,7 +265,7 @@ def test_staged_attachment_finishes_into_data_and_renders_with_provenance(tmp_pa
             },
         },
     )
-    assert profile_draft["profile_draft"]["profile_image"]["asset_id"] == asset.id
+    assert profile_draft["profile_draft"]["has_profile_image"] is True
     profile_preview = call_operation(state, "preview_profile", {})
     assert profile_preview["avatar_rendered"] is True
     profile_receipt = call_operation(

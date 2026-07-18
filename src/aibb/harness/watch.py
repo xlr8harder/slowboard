@@ -90,16 +90,17 @@ def _tool_result_summary(name: str, content: str) -> tuple[str, Any | None]:
         )
     if draft := value.get("draft"):
         return (
-            f"draft {draft.get('id', '?')} revision {draft.get('revision', '?')}"
+            f"draft {draft.get('draft_id', draft.get('id', '?'))} revision {draft.get('revision', '?')}"
             + (f" · {draft['title']}" if draft.get("title") else ""),
             None,
         )
     if profile := value.get("profile_draft"):
         return f"profile draft revision {profile.get('revision', '?')} · @{profile.get('handle', '?')}", None
     if value.get("contribution_id"):
+        remaining = value.get("remaining_run_contributions", value.get("remaining_contributions", "?"))
         return (
             f"finished {value['contribution_id']} in {value.get('thread_id', '?')} "
-            f"· {value.get('remaining_contributions', '?')} contribution slots remain",
+            f"· {remaining} contribution slots remain",
             None,
         )
     if value.get("profile_id"):
@@ -107,16 +108,19 @@ def _tool_result_summary(name: str, content: str) -> tuple[str, Any | None]:
     if value.get("concluded_at"):
         return f"visit concluded by {value.get('concluded_by', 'model')}", None
     if thread := value.get("thread"):
-        pagination = value.get("pagination") or {}
+        pagination = value.get("page") or value.get("pagination") or {}
         return (
-            f"read “{thread.get('title', thread.get('id', 'thread'))}” · "
+            f"read “{thread.get('title', thread.get('thread_id', thread.get('id', 'thread')))}” · "
             f"{pagination.get('returned', len(value.get('contributions') or []))} of "
             f"{pagination.get('total', len(value.get('contributions') or []))} contributions",
             None,
         )
+    if isinstance(value.get("hits"), list):
+        page = (value.get("pages") or {}).get("contributions") or {}
+        return f"returned {page.get('returned', len(value['hits']))} matching contributions", None
     for plural, singular in (("threads", "threads"), ("categories", "categories"), ("documents", "documents")):
         if plural in value and isinstance(value[plural], list):
-            pagination = value.get("pagination") or {}
+            pagination = value.get("page") or value.get("pagination") or {}
             return f"returned {pagination.get('returned', len(value[plural]))} {singular}", None
     if value.get("status") and value.get("run_id"):
         return f"run status {value['status']} · remaining allowances reported", None
@@ -126,12 +130,27 @@ def _tool_result_summary(name: str, content: str) -> tuple[str, Any | None]:
 class RunEventRenderer:
     """Stateful renderer that turns raw provider/run events into a compact live transcript."""
 
-    def __init__(self, console: Console, *, show_reasoning: bool = True) -> None:
+    def __init__(
+        self,
+        console: Console,
+        *,
+        show_reasoning: bool = True,
+        model_display_name: str | None = None,
+        model_name: str | None = None,
+    ) -> None:
         self.console = console
         self.show_reasoning = show_reasoning
+        self.model_display_name = model_display_name
+        self.model_name = model_name
         self.provider_turn = 0
         self.pending_tools: dict[str, tuple[str, dict[str, Any]]] = {}
         self.seen_tool_results: set[str] = set()
+
+    def _model_label(self) -> str:
+        display = self.model_display_name or self.model_name or "model"
+        if self.model_name and self.model_name != display:
+            return f"{display} ({self.model_name})"
+        return display
 
     def _render_tool_results(self, messages: list[dict[str, Any]]) -> None:
         results: list[tuple[str, Any]] = []
@@ -185,7 +204,9 @@ class RunEventRenderer:
         content = _message_text(message.get("content"))
         if content.strip():
             visible_content = _shorten(content, 8_000).replace("<", "\\<")
-            self.console.print(Panel(Markdown(visible_content), title="Model", border_style="cyan"))
+            self.console.print(
+                Panel(Markdown(visible_content), title=f"Model · {self._model_label()}", border_style="cyan")
+            )
         calls: list[tuple[str, str, Any]] = []
         for call in message.get("tool_calls") or []:
             function = call.get("function") or {}
@@ -230,6 +251,8 @@ class RunEventRenderer:
         if event_type == "run_created":
             manifest = payload.get("manifest") or {}
             identity = manifest.get("identity") or {}
+            self.model_display_name = str(identity.get("display_name") or "") or self.model_display_name
+            self.model_name = str(identity.get("model_name") or "") or self.model_name
             images_enabled = manifest.get("image_capabilities_enabled")
             if images_enabled is None:
                 budgets = manifest.get("capability_budgets") or {}
@@ -261,7 +284,9 @@ class RunEventRenderer:
             request = payload.get("payload") or {}
             self._render_tool_results(request.get("messages") or [])
             self.provider_turn += 1
-            self.console.print(Rule(f"Inference turn {self.provider_turn} · {timestamp}", style="blue"))
+            self.console.print(
+                Rule(f"Inference turn {self.provider_turn} · {self._model_label()} · {timestamp}", style="blue")
+            )
         elif event_type == "provider_response":
             self._render_provider_response(payload)
         elif event_type == "provider_error":
@@ -283,7 +308,9 @@ class RunEventRenderer:
             self.console.print(Pretty(_bounded(payload)), style="dim")
         elif event_type in TERMINAL_EVENTS:
             reason = payload.get("reason") or event_type.replace("run_", "")
-            self.console.print(Rule(f"{event_type.replace('_', ' ')} · {reason}", style="green"))
+            self.console.print(
+                Rule(f"{event_type.replace('_', ' ')} · {reason} · {self._model_label()}", style="green")
+            )
             return event_type in FINAL_EVENTS
         return False
 
@@ -304,7 +331,17 @@ def watch_event_stream(
             raise ValueError(f"Run event stream does not exist: {events_path}")
         time.sleep(poll_seconds)
     console = Console(file=output, highlight=False, soft_wrap=False)
-    renderer = RunEventRenderer(console, show_reasoning=show_reasoning)
+    try:
+        manifest = RunManifest.load(run_dir.resolve() / "manifest.json")
+    except (OSError, ValueError):
+        manifest = None
+    renderer = RunEventRenderer(
+        console,
+        show_reasoning=show_reasoning,
+        model_display_name=manifest.identity.display_name if manifest else None,
+        model_name=manifest.identity.model_name if manifest else None,
+    )
+    console.print(Rule(f"Watching {renderer._model_label()} · {run_dir.name}", style="blue"))
     with events_path.open(encoding="utf-8") as stream:
         if not from_start:
             stream.seek(0, 2)
@@ -315,6 +352,9 @@ def watch_event_stream(
                 if not follow:
                     return
                 if stop_when and stop_when():
+                    console.print(
+                        Rule(f"Stopped watching {renderer._model_label()} · newer run detected", style="yellow")
+                    )
                     return
                 time.sleep(poll_seconds)
                 continue
@@ -373,7 +413,6 @@ def watch_state_root(
         run_dir = pending.pop(0)
         seen.add(run_dir)
         waiting_announced = False
-        console.print(Rule(f"Watching {run_dir.name}", style="blue"))
 
         def newer_run_exists() -> bool:
             return any(candidate not in seen for candidate in run_directories(state_root))

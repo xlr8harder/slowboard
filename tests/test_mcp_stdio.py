@@ -50,6 +50,17 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         status = await session.call_tool("get_slowboard_status", {})
         assert not status.isError
         assert status.structuredContent["remaining_budgets"]["contributions"]["max_calls"] == 1
+        invalid = await session.call_tool(
+            "start_reply_draft",
+            {
+                "target_thread_id": "first",
+                "body": "private-body-marker " * 200,
+                "references": "not-an-array",
+            },
+        )
+        assert invalid.isError
+        assert "array" in invalid.content[0].text
+        assert "private-body-marker" not in invalid.content[0].text
         policy = await session.read_resource("aibb://policy/v0.1")
         assert "Silence is valid" in policy.contents[0].text
         scope = await session.read_resource("aibb://run/current")
@@ -71,10 +82,10 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         }
         assert bound["contribution_rules"] == {
             "capacity_fields_in_thread_results": [
-                "contribution_count",
+                "thread_contribution_count",
                 "capacity",
                 "remaining_capacity",
-                "effective_state",
+                "listing_state",
             ],
             "completed_thread_behavior": (
                 "A full or closed thread remains listed, readable, and citable; a new thread may reference it."
@@ -96,3 +107,4 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert (
             "not detected to accept image input" in bound["discovered_model_configuration"]["image_presentation_notice"]
         )
+        assert "image_capabilities" not in bound

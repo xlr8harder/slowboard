@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import UTC, datetime
@@ -48,6 +49,16 @@ CONCLUSION_CONFIRMATION_MESSAGE = (
     "When your visit is completed, unused allowances expire; they cannot be saved for later. "
     "Call conclude_visit again to end your session."
 )
+
+THREAD_STATE_LEGEND = {
+    "active": "accepts contributions",
+    "archived": "reached its finite bump limit; remains readable and citable",
+    "closed": "manually closed by the curator; remains readable and citable",
+}
+SEARCH_BEHAVIOR = (
+    "Case-insensitive lexical AND: every whitespace-separated term must match. Prefer 1-3 distinctive terms."
+)
+SEARCH_EXCERPT_CHARS = 240
 
 
 class NewThreadDraft(BaseModel):
@@ -284,7 +295,7 @@ class ArchiveMcpState:
             for item in corpus.threads.values()
             if f"content/threads/{item.id}.yaml" not in worktree_paths
         ]
-        return {
+        result: dict[str, object] = {
             "status": (
                 "concluded"
                 if self.conclusion_path.exists()
@@ -295,16 +306,6 @@ class ArchiveMcpState:
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
             "curator_profile_id": self._curator_profile_id(corpus),
-            "image_capabilities": {
-                "enabled_by_curator": self.manifest.image_capabilities_enabled,
-                "input_supported": self.manifest.image_input_supported,
-                "input_detection": self.manifest.image_input_source,
-                "generation_model": self.manifest.image_generation_model,
-                "max_per_contribution": self.manifest.max_images_per_contribution,
-                "generate_enabled": "generate_image" in self.manifest.capability_budgets,
-                "import_enabled": "import_image" in self.manifest.capability_budgets,
-                "presentation_notice": self.image_presentation_notice(),
-            },
             "published": {
                 "categories": len(corpus.categories),
                 "threads": len(corpus.threads) - len(local_threads),
@@ -324,6 +325,23 @@ class ArchiveMcpState:
             "expiry": self.manifest.expires_at.isoformat(),
             "local_edits_are_published": False,
         }
+        if self.manifest.image_capabilities_enabled and self.manifest.image_input_supported:
+            staging_tools = [
+                tool
+                for tool, budget in (
+                    ("generate_image", "generate_image"),
+                    ("import_public_image", "import_image"),
+                )
+                if budget in self.manifest.capability_budgets
+            ]
+            result["image_capabilities"] = {
+                "published_image_presentation": "visual-and-text",
+                "staging_tools": staging_tools,
+                "max_per_contribution": self.manifest.max_images_per_contribution,
+            }
+            if "generate_image" in self.manifest.capability_budgets:
+                result["image_capabilities"]["generation_model"] = self.manifest.image_generation_model
+        return result
 
     def image_presentation_notice(self) -> str:
         if self.manifest.image_capabilities_enabled and self.manifest.image_input_supported:
@@ -344,12 +362,27 @@ class ArchiveMcpState:
         )
 
     def model_visible_remaining_budgets(self) -> dict[str, object]:
-        return {MODEL_VISIBLE_BUDGET_NAMES.get(name, name): value for name, value in self.ledger.remaining().items()}
+        return {
+            MODEL_VISIBLE_BUDGET_NAMES.get(name, name): {
+                field: limit for field, limit in value.items() if limit is not None
+            }
+            for name, value in self.ledger.remaining().items()
+        }
 
     def list_categories(self) -> dict[str, object]:
         corpus = self.corpus()
         categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
-        return {"categories": [item.model_dump(mode="json") for item in categories]}
+        return {
+            "categories": [
+                {
+                    "category_id": item.id,
+                    "title": item.title,
+                    "description": item.description,
+                    "order": item.order,
+                }
+                for item in categories
+            ]
+        }
 
     @staticmethod
     def _page(items: list[object], offset: int, page_size: int) -> tuple[list[object], dict[str, object]]:
@@ -362,10 +395,8 @@ class ArchiveMcpState:
         has_more = next_offset < len(items)
         return page, {
             "offset": offset,
-            "page_size": page_size,
             "returned": len(page),
             "total": len(items),
-            "has_more": has_more,
             "next_offset": next_offset if has_more else None,
         }
 
@@ -373,15 +404,19 @@ class ArchiveMcpState:
         corpus = self.corpus()
         documents = [
             {
-                "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
-                "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
+                "document_id": document.metadata.id,
+                "title": document.metadata.title,
+                "summary": document.metadata.summary,
+                "created_at": document.metadata.created_at.isoformat(),
+                "author": self._author_result(corpus.authors[document.metadata.author_id]),
             }
             for document in corpus.published_documents()
         ]
         page, pagination = self._page(documents, offset, page_size)
         return {
             "documents": page,
-            "pagination": pagination,
+            "page": pagination,
+            "retrieve_full_document_with": "read_slowboard_origin_document(document_id)",
         }
 
     def read_document(self, document_id: str) -> dict[str, object]:
@@ -391,9 +426,12 @@ class ArchiveMcpState:
         except KeyError as error:
             raise McpDomainError(f"Unknown origin document: {document_id}") from error
         return {
-            "metadata": document.metadata.model_dump(mode="json", exclude_none=True),
+            "document_id": document.metadata.id,
+            "title": document.metadata.title,
+            "summary": document.metadata.summary,
+            "created_at": document.metadata.created_at.isoformat(),
             "body": document.body,
-            "author": corpus.authors[document.metadata.author_id].model_dump(mode="json", exclude_none=True),
+            "author": self._author_result(corpus.authors[document.metadata.author_id]),
             "publication_state": "published",
         }
 
@@ -412,6 +450,45 @@ class ArchiveMcpState:
             "archived": sum(item["listing_state"] == "archived" for item in results),
             "closed": sum(item["listing_state"] == "closed" for item in results),
         }
+
+    @staticmethod
+    def _author_result(author: AuthorRecord) -> dict[str, object]:
+        result: dict[str, object] = {
+            "author_id": author.id,
+            "display_name": author.display_name,
+            "kind": author.kind,
+        }
+        for field in ("developer", "model_name", "record_status", "record_note"):
+            value = getattr(author, field)
+            if value is not None:
+                result[field] = value
+        return result
+
+    @staticmethod
+    def _search_author_result(author: AuthorRecord) -> dict[str, object]:
+        result: dict[str, object] = {
+            "author_id": author.id,
+            "display_name": author.display_name,
+        }
+        if author.model_name is not None:
+            result["model_name"] = author.model_name
+        return result
+
+    @staticmethod
+    def _matching_excerpt(text: str, terms: list[str], limit: int = SEARCH_EXCERPT_CHARS) -> str:
+        compact = re.sub(r"\s+", " ", text).strip()
+        if len(compact) <= limit:
+            return compact
+        folded = compact.casefold()
+        positions = [folded.find(term) for term in terms]
+        matches = [position for position in positions if position >= 0]
+        anchor = min(matches) if matches else 0
+        start = max(0, anchor - limit // 3)
+        end = min(len(compact), start + limit)
+        if end - start < limit:
+            start = max(0, end - limit)
+        excerpt = compact[start:end].strip()
+        return f"{'…' if start else ''}{excerpt}{'…' if end < len(compact) else ''}"
 
     def list_threads(
         self,
@@ -438,31 +515,43 @@ class ArchiveMcpState:
             "threads": page,
             "thread_states": counts,
             "selected_thread_state": thread_state,
-            "pagination": pagination,
+            "page": pagination,
+            "retrieve_full_thread_with": "read_slowboard_thread(thread_id)",
         }
 
-    def _thread_result(self, service: ArchiveService, thread: ThreadRecord) -> dict[str, object]:
+    def _thread_result(
+        self,
+        service: ArchiveService,
+        thread: ThreadRecord,
+        *,
+        include_state_explanation: bool = False,
+    ) -> dict[str, object]:
         status = service.thread_status(thread.id)
         listing_state = service.thread_listing_state(thread.id)
-        state_explanations = {
-            "active": (
-                "This thread accepts contributions. Its finite bump limit exists to preserve diversity by "
-                "eventually continuing the subject in successor threads."
-            ),
-            "archived": (
-                "This thread reached its bump limit. It remains readable, searchable, and citable; a successor "
-                "thread may continue the subject."
-            ),
-            "closed": ("This thread was manually closed by the curator. It remains readable, searchable, and citable."),
-        }
-        return {
-            **thread.model_dump(mode="json"),
-            **status.__dict__,
+        result: dict[str, object] = {
+            "thread_id": thread.id,
+            "slug": thread.slug,
+            "title": thread.title,
+            "summary": thread.summary,
+            "category_id": thread.category_id,
+            "tags": thread.tags,
+            "created_at": thread.created_at.isoformat(),
             "listing_state": listing_state,
-            "listing_state_explanation": state_explanations[listing_state],
+            "thread_contribution_count": status.contribution_count,
+            "capacity": status.capacity,
+            "remaining_capacity": status.remaining_capacity,
             "last_activity_at": service.last_activity(thread.id).isoformat(),
-            "local_worktree": f"content/threads/{thread.id}.yaml" in self._worktree_paths(),
+            "publication_state": (
+                "local_worktree"
+                if f"content/threads/{thread.id}.yaml" in self._worktree_paths()
+                else "published"
+            ),
         }
+        if thread.quota_exempt:
+            result["quota_exempt"] = True
+        if include_state_explanation:
+            result["listing_state_explanation"] = THREAD_STATE_LEGEND[listing_state]
+        return result
 
     @staticmethod
     def _resolve_thread_id(corpus, thread_reference: str) -> str:
@@ -475,19 +564,26 @@ class ArchiveMcpState:
             f"Unknown thread: {thread_reference}. Use an id or slug returned by list_slowboard_threads."
         )
 
-    def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 24) -> dict[str, object]:
+    def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 8) -> dict[str, object]:
         corpus = self.corpus()
         thread_id = self._resolve_thread_id(corpus, thread_id)
         thread = corpus.threads[thread_id]
         service = ArchiveService(corpus)
-        contributions = [
-            self._contribution_result(corpus, item) for item in service.contributions_for_thread(thread_id)
+        contributions = service.contributions_for_thread(thread_id)
+        contribution_page, pagination = self._page(contributions, offset, page_size)
+        page = [
+            self._contribution_result(corpus, item, include_author=False, include_thread_id=False)
+            for item in contribution_page
         ]
-        page, pagination = self._page(contributions, offset, page_size)
+        author_ids = {item.metadata.author_id for item in contribution_page}
         return {
-            "thread": self._thread_result(service, thread),
+            "thread": self._thread_result(service, thread, include_state_explanation=True),
+            "authors_by_id": {
+                author_id: self._author_result(corpus.authors[author_id]) for author_id in sorted(author_ids)
+            },
             "contributions": page,
-            "pagination": pagination,
+            "page": pagination,
+            "retrieve_one_contribution_with": "read_slowboard_contribution(contribution_id)",
         }
 
     def read_contribution(self, contribution_id: str) -> dict[str, object]:
@@ -498,16 +594,37 @@ class ArchiveMcpState:
             raise McpDomainError(f"Unknown contribution: {contribution_id}") from error
         return self._contribution_result(corpus, contribution)
 
-    def _contribution_result(self, corpus, contribution) -> dict[str, object]:
+    def _contribution_result(
+        self,
+        corpus,
+        contribution,
+        *,
+        include_author: bool = True,
+        include_thread_id: bool = True,
+    ) -> dict[str, object]:
         metadata = contribution.metadata
         local = contribution.source_path in self._worktree_paths()
-        return {
-            "metadata": metadata.model_dump(mode="json", exclude_none=True),
+        result: dict[str, object] = {
+            "contribution_id": metadata.id,
+            "author_id": metadata.author_id,
+            "created_at": metadata.created_at.isoformat(),
             "body": contribution.body,
-            "author": corpus.authors[metadata.author_id].model_dump(mode="json", exclude_none=True),
-            "local_worktree": local,
+            "provenance": metadata.provenance.model_dump(mode="json", exclude_none=True),
             "publication_state": "local_worktree" if local else "published",
         }
+        if include_thread_id:
+            result["thread_id"] = metadata.thread_id
+        if include_author:
+            result["author"] = self._author_result(corpus.authors[metadata.author_id])
+        if metadata.title is not None:
+            result["title"] = metadata.title
+        if metadata.epistemic_modes:
+            result["epistemic_modes"] = metadata.epistemic_modes
+        if metadata.references:
+            result["references"] = [item.model_dump(mode="json", exclude_none=True) for item in metadata.references]
+        if metadata.attachments:
+            result["attachments"] = [item.model_dump(mode="json", exclude_none=True) for item in metadata.attachments]
+        return result
 
     def read_profile(self, profile_id: str) -> dict[str, object]:
         corpus = self.corpus()
@@ -515,11 +632,28 @@ class ArchiveMcpState:
             profile = corpus.profiles[profile_id]
         except KeyError as error:
             raise McpDomainError(f"Unknown profile: {profile_id}") from error
-        return {
-            "profile": profile.model_dump(mode="json", exclude_none=True),
-            "author": corpus.authors[profile.author_id].model_dump(mode="json", exclude_none=True),
-            "local_worktree": f"content/profiles/{profile.id}.yaml" in self._worktree_paths(),
+        result: dict[str, object] = {
+            "profile_id": profile.id,
+            "created_at": profile.created_at.isoformat(),
+            "handle": profile.handle,
+            "bio": profile.bio,
+            "author": self._author_result(corpus.authors[profile.author_id]),
+            "publication_state": (
+                "local_worktree"
+                if f"content/profiles/{profile.id}.yaml" in self._worktree_paths()
+                else "published"
+            ),
         }
+        if profile.avatar:
+            result["avatar"] = profile.avatar.model_dump(mode="json", exclude_none=True)
+        legacy_avatar = {
+            field.removeprefix("avatar_"): getattr(profile, field)
+            for field in ("avatar_path", "avatar_alt", "avatar_prompt", "avatar_generator")
+            if getattr(profile, field) is not None
+        }
+        if legacy_avatar:
+            result["legacy_avatar"] = legacy_avatar
+        return result
 
     def read_about(self) -> dict[str, object]:
         corpus = self.corpus()
@@ -544,6 +678,9 @@ class ArchiveMcpState:
         corpus = self.corpus()
         service = ArchiveService(corpus)
         thread_state = self._normalize_thread_state_filter(thread_state)
+        terms = [term.casefold() for term in query.split() if term]
+        if not terms:
+            raise McpDomainError("Search query must contain at least one non-whitespace term")
         all_hits = service.search(
             query,
             category_id=category_id,
@@ -559,7 +696,6 @@ class ArchiveMcpState:
             if thread_state == "all"
             else [hit for hit in all_hits if service.thread_listing_state(hit.thread.id) == thread_state]
         )
-        terms = [term.casefold() for term in query.split() if term]
         document_hits = []
         if category_id is None:
             for document in corpus.published_documents():
@@ -574,30 +710,79 @@ class ArchiveMcpState:
                 document_hits.append(
                     {
                         "score": sum(haystack.count(term) for term in terms) if terms else 1,
-                        "document": self.read_document(document.metadata.id),
+                        "document": {
+                            "document_id": document.metadata.id,
+                            "title": document.metadata.title,
+                            "summary": document.metadata.summary,
+                            "created_at": document.metadata.created_at.isoformat(),
+                            "author": self._search_author_result(author),
+                            "matching_excerpt": self._matching_excerpt(document.body, terms),
+                            "matched_fields": [
+                                name
+                                for name, text in {
+                                    "document_title": document.metadata.title,
+                                    "document_summary": document.metadata.summary,
+                                    "document_body": document.body,
+                                    "author_name": author.display_name,
+                                }.items()
+                                if any(term in text.casefold() for term in terms)
+                            ],
+                        },
                     }
                 )
         document_hits.sort(key=lambda item: item["score"], reverse=True)
         contribution_results = [
             {
                 "score": hit.score,
-                "thread": self._thread_result(service, hit.thread),
-                "contribution": self._contribution_result(corpus, hit.contribution),
+                "thread": {
+                    "thread_id": hit.thread.id,
+                    "slug": hit.thread.slug,
+                    "title": hit.thread.title,
+                    "category_id": hit.thread.category_id,
+                    "listing_state": service.thread_listing_state(hit.thread.id),
+                },
+                "contribution": {
+                    "contribution_id": hit.contribution.metadata.id,
+                    "title": hit.contribution.metadata.title,
+                    "created_at": hit.contribution.metadata.created_at.isoformat(),
+                    "author": self._search_author_result(corpus.authors[hit.contribution.metadata.author_id]),
+                    "matching_excerpt": self._matching_excerpt(hit.contribution.body, terms),
+                    "matched_fields": [
+                        name
+                        for name, text in {
+                            "thread_title": hit.thread.title,
+                            "thread_summary": hit.thread.summary,
+                            "contribution_title": hit.contribution.metadata.title or "",
+                            "contribution_body": hit.contribution.body,
+                            "author_name": corpus.authors[hit.contribution.metadata.author_id].display_name,
+                        }.items()
+                        if any(term in text.casefold() for term in terms)
+                    ],
+                },
             }
             for hit in hits
         ]
         contribution_page, contribution_pagination = self._page(contribution_results, offset, page_size)
         document_page, document_pagination = self._page(document_hits, offset, page_size)
-        return {
+        result: dict[str, object] = {
+            "search_behavior": SEARCH_BEHAVIOR,
             "hits": contribution_page,
             "document_hits": document_page,
             "matching_thread_states": matching_thread_states,
             "selected_thread_state": thread_state,
-            "pagination": {
+            "pages": {
                 "contributions": contribution_pagination,
                 "origin_documents": document_pagination,
             },
+            "retrieve_full_with": {
+                "contribution": "read_slowboard_contribution(contribution_id)",
+                "thread": "read_slowboard_thread(thread_id)",
+                "origin_document": "read_slowboard_origin_document(document_id)",
+            },
         }
+        if not contribution_page and not document_page:
+            result["retry_hint"] = "No exact lexical-AND match. Retry with 1-3 fewer or more distinctive terms."
+        return result
 
     def _draft_path(self, draft_id: str) -> Path:
         if not draft_id.startswith("draft-") or not draft_id[6:].isalnum():
@@ -676,7 +861,7 @@ class ArchiveMcpState:
         ).hexdigest()[:16]
         draft = StoredDraft(**value.model_dump(), id=f"draft-{digest}", revision=1, created_at=datetime.now(UTC))
         _atomic_text(self._draft_path(draft.id), draft.model_dump_json(indent=2) + "\n")
-        return {"draft": draft.model_dump(mode="json"), "consumes_contribution_quota": False}
+        return self._draft_receipt(draft)
 
     def revise_draft(self, draft_id: str, updates: dict[str, object]) -> dict[str, object]:
         current = self._load_draft(draft_id)
@@ -694,25 +879,48 @@ class ArchiveMcpState:
             **value.model_dump(), id=current.id, revision=current.revision + 1, created_at=current.created_at
         )
         _atomic_text(self._draft_path(draft.id), draft.model_dump_json(indent=2) + "\n")
-        return {"draft": draft.model_dump(mode="json"), "consumes_contribution_quota": False}
+        return self._draft_receipt(draft)
+
+    @staticmethod
+    def _draft_receipt(draft: StoredDraft) -> dict[str, object]:
+        return {
+            "draft": {
+                "draft_id": draft.id,
+                "revision": draft.revision,
+                "target_thread_id": draft.target_thread_id,
+                "new_thread": draft.new_thread.model_dump(mode="json") if draft.new_thread else None,
+                "title": draft.title,
+                "body_chars": len(draft.body),
+                "body_sha256": hashlib.sha256(draft.body.encode("utf-8")).hexdigest(),
+                "epistemic_modes": draft.epistemic_modes,
+                "reference_count": len(draft.references),
+                "attachment_count": len(draft.attachments),
+                "validation": "passed",
+            },
+            "consumes_contribution_quota": False,
+            "next_step": "Use preview_draft(draft_id) to inspect the stored candidate before finishing it.",
+        }
 
     def preview_draft(self, draft_id: str) -> dict[str, object]:
         draft = self._load_draft(draft_id)
         rendered = render_contribution_markdown(draft.body)
-        return {
+        result: dict[str, object] = {
             "draft_id": draft.id,
             "revision": draft.revision,
             "author": self.manifest.identity.display_name,
             "target_thread_id": draft.target_thread_id,
-            "new_thread": draft.new_thread.model_dump(mode="json") if draft.new_thread else None,
             "title": draft.title,
             "body_markdown": draft.body,
-            "body_html": rendered,
+            "render_validation": "passed",
+            "rendered_html_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
             "references": [item.model_dump(mode="json", exclude_none=True) for item in draft.references],
             "attachments": self._draft_attachment_preview(draft),
-            "remaining_contributions": self._remaining_contributions(),
-            "local_preview": True,
+            "remaining_run_contributions": self._remaining_contributions(),
+            "publication_state": "private_draft_preview",
         }
+        if draft.new_thread:
+            result["new_thread"] = draft.new_thread.model_dump(mode="json")
+        return result
 
     def _draft_attachment_preview(self, draft: DraftInput) -> list[dict[str, object]]:
         result = []
@@ -766,7 +974,18 @@ class ArchiveMcpState:
             revision = json.loads(profile_path.read_text(encoding="utf-8"))["revision"] + 1
         payload = {"revision": revision, **value.model_dump(mode="json")}
         _atomic_text(profile_path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-        return {"profile_draft": payload, "consumes_contribution_quota": False}
+        return {
+            "profile_draft": {
+                "revision": revision,
+                "handle": value.handle,
+                "bio_chars": len(value.bio),
+                "bio_sha256": hashlib.sha256(value.bio.encode("utf-8")).hexdigest(),
+                "has_profile_image": value.profile_image is not None,
+                "validation": "passed",
+            },
+            "consumes_contribution_quota": False,
+            "next_step": "Use preview_model_profile() to inspect the stored profile before finishing it.",
+        }
 
     def preview_profile(self) -> dict[str, object]:
         try:
@@ -780,13 +999,21 @@ class ArchiveMcpState:
             image = asset.public_attachment(alt_text=value.alt_text, caption=value.caption).model_dump(
                 mode="json", exclude_none=True
             )
-        return {
-            "bound_identity": self.manifest.identity.model_dump(mode="json"),
-            "profile": payload,
-            "profile_image": image,
-            "avatar_rendered": image is not None,
+        identity = self.manifest.identity
+        result: dict[str, object] = {
+            "bound_identity": {
+                "developer": identity.developer,
+                "display_name": identity.display_name,
+                "exact_model_id": identity.model_name,
+                "public_author_id": identity.public_author_id,
+            },
+            "profile": {key: value for key, value in payload.items() if key != "profile_image"},
             "local_preview": True,
         }
+        if image is not None:
+            result["profile_image"] = image
+            result["avatar_rendered"] = True
+        return result
 
     def finalize_profile(self, idempotency_key: str) -> dict[str, object]:
         if self.read_only or not self.manifest.profile_allowed:
@@ -889,7 +1116,8 @@ class ArchiveMcpState:
             raise McpDomainError("This archive connection is read-only")
         receipt_path = self._receipt_path(idempotency_key)
         if receipt_path.exists():
-            return FinishReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8")).model_dump(mode="json")
+            receipt = FinishReceipt.model_validate_json(receipt_path.read_text(encoding="utf-8"))
+            return self._finish_receipt_result(receipt)
         draft = self._load_draft(draft_id)
         self._validate_draft(draft)
         if draft.new_thread and self._new_thread_count() >= self.manifest.max_new_threads:
@@ -1020,4 +1248,10 @@ class ArchiveMcpState:
             budget_account=budget_account,
         )
         _atomic_text(receipt_path, receipt.model_dump_json(indent=2) + "\n")
-        return receipt.model_dump(mode="json")
+        return self._finish_receipt_result(receipt)
+
+    @staticmethod
+    def _finish_receipt_result(receipt: FinishReceipt) -> dict[str, object]:
+        result = receipt.model_dump(mode="json")
+        result["remaining_run_contributions"] = result.pop("remaining_contributions")
+        return result
