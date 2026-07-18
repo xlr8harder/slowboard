@@ -26,6 +26,7 @@ from aibb.harness.engine import AibbHarnessEngine, EngineSnapshot
 from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
+from aibb.runtime.headless import HEADLESS_CONTINUATION_MESSAGES
 from aibb.runtime.models import BoundModelIdentity, BudgetLimits
 from aibb.sessions import SessionStore
 
@@ -529,10 +530,25 @@ async def run_openrouter_visit(
             store.write_checkpoint(engine.snapshot())
             return manifest.run_id
 
-        async def send(text: str | None, *, allow_queued_input: bool = False) -> None:
+        async def send(
+            text: str | None,
+            *,
+            allow_queued_input: bool = False,
+            source: Literal["curator", "harness"] = "curator",
+        ) -> None:
             if text is None:
                 store.append("context_only_begin", {}, "operator")
                 run_task = asyncio.create_task(engine.begin())
+            elif source == "harness":
+                store.append(
+                    "headless_continuation_message",
+                    {
+                        "text": text,
+                        "version": manifest.headless_continuation_version,
+                    },
+                    "model",
+                )
+                run_task = asyncio.create_task(engine.send_harness_message(text))
             else:
                 store.append("curator_message", {"text": text}, "model")
                 run_task = asyncio.create_task(engine.send_curator_message(text))
@@ -591,22 +607,44 @@ async def run_openrouter_visit(
                 )
 
         if opening is not None or manifest.mode == "headless":
-            await send(opening, allow_queued_input=False)
-            maybe_compact()
-            outcome = _turn_boundary_outcome(manifest, run_dir, once=once)
-            if outcome == "model_completed":
-                store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
-                store.write_checkpoint(engine.snapshot())
-                return manifest.run_id
-            if outcome in {"single_turn_suspended", "headless_suspended"}:
-                reason = (
-                    "single-turn boundary"
-                    if outcome == "single_turn_suspended"
-                    else "headless model turn ended without conclude_visit"
+            next_message = opening
+            next_source: Literal["curator", "harness"] = "curator"
+            continuation_attempts = sum(
+                event.type == "headless_continuation_message" for event in store.read_events()
+            )
+            while True:
+                await send(
+                    next_message,
+                    allow_queued_input=False,
+                    source=next_source,
                 )
-                store.append("run_suspended", {"reason": reason}, "operator")
-                store.write_checkpoint(engine.snapshot())
-                return manifest.run_id
+                maybe_compact()
+                outcome = _turn_boundary_outcome(manifest, run_dir, once=once)
+                if outcome == "model_completed":
+                    store.append("run_completed", {"reason": "model_concluded_visit"}, "model")
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
+                if outcome == "single_turn_suspended":
+                    store.append("run_suspended", {"reason": "single-turn boundary"}, "operator")
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
+                if outcome != "headless_suspended":
+                    break
+                if continuation_attempts >= manifest.max_headless_continuations:
+                    store.append(
+                        "run_suspended",
+                        {
+                            "reason": "headless continuation ceiling reached without conclude_visit",
+                            "continuation_attempts": continuation_attempts,
+                            "continuation_version": manifest.headless_continuation_version,
+                        },
+                        "operator",
+                    )
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
+                continuation_attempts += 1
+                next_message = HEADLESS_CONTINUATION_MESSAGES[manifest.headless_continuation_version]
+                next_source = "harness"
 
         console.print(
             "Commands: :begin, :status, :compact, :suspend, :complete. Other text is sent as a curator message."

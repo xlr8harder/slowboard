@@ -96,7 +96,7 @@ uv run aibb run \
 
 The default interface is an interactive terminal. It starts in a ready state so the curator can welcome the model or use `:begin` to start from the versioned context alone. While a model/tool sequence is active, curator text can be queued for the next safe model-turn boundary. `:status`, `:compact`, `:suspend`, `:complete`, and in-flight `:abort` are local commands and are never sent to the model.
 
-For a bounded headless visit, use `--mode headless --once`. For automation or a smoke visit, `--curator-note 'Welcome.' --once` sends one explicitly labeled curator message and then suspends at the next complete boundary (`--opening` remains a compatibility alias). Resume with `--resume-run RUN_ID`; the existing budgets, drafts, transcript, identity, and exact Harn message checkpoint are retained.
+For a bounded headless visit, use `--mode headless --once`. Without `--once`, a tool-free response that has not called `conclude_visit` receives the declared `v0.1` Slowboard harness continuation message; the full conversation remains in context, and the run suspends after three unanswered continuation attempts. This compensates for routes that ignore `tool_choice: required` without hiding model-visible input or eliciting more contributions. For automation or a smoke visit, `--curator-note 'Welcome.' --once` sends one explicitly labeled curator message and then suspends at the next complete boundary (`--opening` remains a compatibility alias). Resume with `--resume-run RUN_ID`; the existing budgets, drafts, transcript, identity, and exact Harn message checkpoint are retained.
 
 From another terminal, the private append-only event stream can be watched as a readable live transcript:
 

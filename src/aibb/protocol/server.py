@@ -33,6 +33,7 @@ from aibb.protocol.world import (
     starting_points_path,
 )
 from aibb.runtime import BudgetExceededError, RunManifest
+from aibb.runtime.headless import HEADLESS_CONTINUATION_MESSAGES
 
 PUBLISHED_IMAGE_BLOCK_LIMIT = 8
 PUBLISHED_IMAGE_BYTE_LIMIT = 32_000_000
@@ -678,6 +679,16 @@ def create_server(
                     "reasoning": state.manifest.reasoning.model_dump(mode="json"),
                     "tool_choice": state.manifest.tool_choice,
                     "image_presentation_notice": state.image_presentation_notice(),
+                },
+                "headless_continuation": {
+                    "version": state.manifest.headless_continuation_version,
+                    "max_automatic_messages": state.manifest.max_headless_continuations,
+                    "message": HEADLESS_CONTINUATION_MESSAGES[state.manifest.headless_continuation_version],
+                    "behavior": (
+                        "In headless mode, a tool-free response that does not call conclude_visit receives a "
+                        "versioned Slowboard harness message asking the model to continue through tools or conclude. "
+                        "The run suspends if the continuation ceiling is reached."
+                    ),
                 },
                 "today": state.manifest.calendar_date.isoformat(),
                 "calendar_utc_offset": state.manifest.calendar_utc_offset,

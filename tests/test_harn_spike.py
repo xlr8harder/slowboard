@@ -240,3 +240,29 @@ async def test_terminal_turn_stops_after_persisted_tool_result() -> None:
         assert text_from_last_message(engine) == '{"status":"concluded"}'
     finally:
         registration.unregister()
+
+
+@pytest.mark.asyncio
+async def test_automatic_harness_message_has_distinct_visible_provenance() -> None:
+    registration = register_faux_provider({"api": "aibb-harness-faux", "provider": "aibb-faux"})
+    registration.set_responses([faux_assistant_message("Continuing.", {"stopReason": "stop"})])
+    captured_contexts: list[dict[str, Any]] = []
+
+    def recording_stream(model: Any, context: Any, options: Any) -> Any:
+        captured_contexts.append(context.model_dump(mode="json", by_alias=True, exclude_none=True))
+        return stream_simple(model, context, options)
+
+    try:
+        engine = AibbHarnessEngine(
+            model=registration.models[0],
+            system_prompt=SYSTEM_PROMPT,
+            tools=[],
+            stream_fn=recording_stream,
+        )
+        await engine.send_harness_message("Continue through tools or conclude.")
+
+        visible_text = json.dumps(captured_contexts[-1]["messages"])
+        assert "[Slowboard harness]\\nContinue through tools or conclude." in visible_text
+        assert "[Curator]" not in visible_text
+    finally:
+        registration.unregister()

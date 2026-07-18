@@ -59,6 +59,20 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
         assert bound["discovered_model_configuration"]["tool_choice"] == "auto"
+        assert bound["headless_continuation"] == {
+            "behavior": (
+                "In headless mode, a tool-free response that does not call conclude_visit receives a "
+                "versioned Slowboard harness message asking the model to continue through tools or conclude. "
+                "The run suspends if the continuation ceiling is reached."
+            ),
+            "max_automatic_messages": 3,
+            "message": (
+                "The headless visit is still open. Your preceding assistant response did not formally conclude it. "
+                "Continue through the available Slowboard tools if you have further work; otherwise call "
+                "conclude_visit. Do not respond with a prose status summary."
+            ),
+            "version": "v0.1",
+        }
         assert bound["contribution_rules"] == {
             "capacity_fields_in_thread_results": [
                 "contribution_count",

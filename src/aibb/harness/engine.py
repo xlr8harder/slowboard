@@ -46,11 +46,19 @@ def _dump_message(message: AgentMessage) -> dict[str, Any]:
     return message.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
-def _curator_message(text: str) -> UserMessage:
+def _labeled_user_message(label: str, text: str) -> UserMessage:
     return UserMessage(
-        content=[TextContent(text=f"[Curator]\n{text}")],
+        content=[TextContent(text=f"[{label}]\n{text}")],
         timestamp=int(time.time() * 1000),
     )
+
+
+def _curator_message(text: str) -> UserMessage:
+    return _labeled_user_message("Curator", text)
+
+
+def _harness_message(text: str) -> UserMessage:
+    return _labeled_user_message("Slowboard harness", text)
 
 
 class AibbHarnessEngine:
@@ -139,6 +147,11 @@ class AibbHarnessEngine:
 
     async def send_curator_message(self, text: str) -> None:
         await self._agent.prompt(_curator_message(text))
+
+    async def send_harness_message(self, text: str) -> None:
+        """Send a versioned, automatically generated operational message."""
+
+        await self._agent.prompt(_harness_message(text))
 
     async def begin(self) -> None:
         """Begin from a preinstalled non-assistant context message without adding text."""

@@ -214,6 +214,15 @@ class RunEventRenderer:
             )
         elif event_type in {"curator_message", "curator_message_queued"}:
             self.console.print(Panel(Markdown(str(payload.get("text") or "")), title="Curator", border_style="magenta"))
+        elif event_type == "headless_continuation_message":
+            version = escape(str(payload.get("version") or "unknown"))
+            self.console.print(
+                Panel(
+                    Markdown(str(payload.get("text") or "")),
+                    title=f"Slowboard harness continuation {version}",
+                    border_style="yellow",
+                )
+            )
         elif event_type == "provider_request":
             request = payload.get("payload") or {}
             self._render_tool_results(request.get("messages") or [])

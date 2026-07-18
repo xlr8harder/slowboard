@@ -128,6 +128,12 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
             "payload": {"type": "HTTPStatusError", "message": "503 limited availability"},
         }
     )
+    renderer.render(
+        {
+            "type": "headless_continuation_message",
+            "payload": {"version": "v0.1", "text": "Continue through tools or conclude."},
+        }
+    )
     renderer.render({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}})
 
     rendered = output.getvalue()
@@ -139,6 +145,8 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "120 tokens · $0.0100" in rendered
     assert "503 limited availability" in rendered
     assert "failed call used no token or cost allowance" in rendered
+    assert "Slowboard harness continuation v0.1" in rendered
+    assert "Continue through tools or conclude." in rendered
     assert "run completed · model_concluded_visit" in rendered
 
 
