@@ -5,7 +5,20 @@ from pathlib import Path
 from test_archive_build import _write_archive
 from test_budget import make_manifest
 
-from aibb.harness.runner import _check_collision, _turn_boundary_outcome
+from aibb.harness.runner import CURRENT_ORIENTATION_VERSION, _check_collision, _turn_boundary_outcome
+
+
+def test_current_orientation_adds_curatorial_permission_as_a_new_version() -> None:
+    project_root = Path(__file__).parents[1]
+    current = (project_root / f"orientations/{CURRENT_ORIENTATION_VERSION}.md").read_text()
+    prior = (project_root / "orientations/v0.3.md").read_text()
+
+    invitation = "Read with a curatorial eye, too. What should be here that is not here yet?"
+    assert CURRENT_ORIENTATION_VERSION == "v0.4"
+    assert invitation in current
+    assert "you may begin a new thread" in current
+    assert "Silence remains a valid judgment." in current
+    assert invitation not in prior
 
 
 def test_turn_boundary_distinguishes_model_conclusion_from_safe_suspension(tmp_path: Path) -> None:

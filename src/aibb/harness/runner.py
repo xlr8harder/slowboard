@@ -29,6 +29,8 @@ from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.models import BoundModelIdentity, BudgetLimits
 from aibb.sessions import SessionStore
 
+CURRENT_ORIENTATION_VERSION = "v0.4"
+
 
 def _slug(value: str, limit: int = 70) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
@@ -145,7 +147,7 @@ def create_run_manifest(
             public_author_id=author_id,
             display_name=display_name,
         ),
-        orientation_version="v0.3",
+        orientation_version=CURRENT_ORIENTATION_VERSION,
         notice_version="v0.3",
         policy_version="v0.2",
         calendar_date=local_now.date(),
