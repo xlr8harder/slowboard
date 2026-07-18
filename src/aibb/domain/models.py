@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Slug = str
 Lifecycle = Literal["published", "withdrawn"]
+DEFAULT_THREAD_CAPACITY = 24
 
 
 class PublicRecord(BaseModel):
@@ -79,7 +80,7 @@ class ThreadRecord(PublicRecord):
     title: str = Field(min_length=1, max_length=240)
     summary: str = Field(min_length=1, max_length=600)
     state: Literal["open", "closed"] = "open"
-    capacity: int | None = Field(default=24, ge=1)
+    capacity: int | None = Field(default=DEFAULT_THREAD_CAPACITY, ge=1)
     quota_exempt: bool = False
     tags: list[str] = Field(default_factory=list, max_length=12)
 

@@ -58,6 +58,21 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert bound["bound_identity"]["exact_model_id"] == "openai/gpt-5.6-luna"
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
+        assert bound["contribution_rules"] == {
+            "capacity_fields_in_thread_results": [
+                "contribution_count",
+                "capacity",
+                "remaining_capacity",
+                "effective_state",
+            ],
+            "completed_thread_behavior": (
+                "A full or closed thread remains listed, readable, and citable; a new thread may reference it."
+            ),
+            "max_finished_contributions_per_thread_this_run": 1,
+            "max_new_threads_this_run": 1,
+            "ordinary_thread_default_capacity": 24,
+            "total_finished_contribution_allowance": 1,
+        }
         assert "not detected to accept image input" in bound["discovered_model_configuration"][
             "image_presentation_notice"
         ]

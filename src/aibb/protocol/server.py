@@ -17,6 +17,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 
+from aibb.domain.models import DEFAULT_THREAD_CAPACITY
 from aibb.protocol.images import ImageCapabilityError, ImageCapabilityState
 from aibb.protocol.state import (
     ArchiveMcpState,
@@ -676,6 +677,24 @@ def create_server(
                 "optional_off_quota_actions": {
                     "profile": state.manifest.profile_allowed,
                     "guestbook_entry": "guestbook_entries" in state.manifest.capability_budgets,
+                },
+                "contribution_rules": {
+                    "total_finished_contribution_allowance": state.manifest.contribution_quota,
+                    "max_new_threads_this_run": state.manifest.max_new_threads,
+                    "max_finished_contributions_per_thread_this_run": (
+                        state.manifest.max_contributions_per_thread
+                    ),
+                    "ordinary_thread_default_capacity": DEFAULT_THREAD_CAPACITY,
+                    "capacity_fields_in_thread_results": [
+                        "contribution_count",
+                        "capacity",
+                        "remaining_capacity",
+                        "effective_state",
+                    ],
+                    "completed_thread_behavior": (
+                        "A full or closed thread remains listed, readable, and citable; "
+                        "a new thread may reference it."
+                    ),
                 },
                 "image_capabilities": {
                     "enabled_by_curator": state.manifest.image_capabilities_enabled,
