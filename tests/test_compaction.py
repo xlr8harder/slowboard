@@ -8,8 +8,9 @@ from harn_ai.providers.faux import faux_assistant_message, faux_tool_call, regis
 from harn_ai.stream import stream_simple
 from harn_ai.types import TextContent, validate_message
 
-from aibb.harness.compaction import compact_archive_results
+from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
 from aibb.harness.engine import AibbHarnessEngine, EngineSnapshot
+from aibb.harness.token_estimate import ESTIMATED_IMAGE_INPUT_TOKENS
 
 
 def _tool_result(index: int, name: str = "read_thread") -> dict[str, object]:
@@ -78,6 +79,25 @@ def test_compaction_is_a_noop_without_older_eligible_results() -> None:
         )
         is None
     )
+
+
+def test_context_estimate_counts_harn_images_as_vision_tokens_not_base64_text() -> None:
+    messages = [
+        {
+            "role": "toolResult",
+            "toolCallId": "call-image",
+            "toolName": "generate_image",
+            "content": [
+                {"type": "text", "text": '{"asset_id":"image-one"}'},
+                {"type": "image", "mimeType": "image/webp", "data": "a" * 500_000},
+            ],
+        }
+    ]
+
+    estimate = estimate_message_tokens(messages)
+
+    assert estimate >= ESTIMATED_IMAGE_INPUT_TOKENS
+    assert estimate < ESTIMATED_IMAGE_INPUT_TOKENS + 1_000
 
 
 @pytest.mark.asyncio

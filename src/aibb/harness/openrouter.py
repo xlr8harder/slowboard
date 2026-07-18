@@ -31,13 +31,13 @@ from harn_ai.types import (
 )
 from harn_ai.utils.event_stream import AssistantMessageEventStream
 
+from aibb.harness.token_estimate import estimate_json_tokens
 from aibb.runtime import BudgetLedger
 from aibb.runtime.budget import Usage as LedgerUsage
 from aibb.sessions.store import SessionStore
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 REASONING_DETAILS_SIGNATURE_PREFIX = "openrouter-reasoning-details:"
-ESTIMATED_IMAGE_INPUT_TOKENS = 4_096
 
 
 def _encode_reasoning_details(value: list[dict[str, Any]]) -> str:
@@ -250,21 +250,7 @@ def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
     the full encoded payload separately for request-byte accounting.
     """
 
-    image_count = 0
-
-    def scrub(value: Any) -> Any:
-        nonlocal image_count
-        if isinstance(value, str) and value.startswith("data:image/") and ";base64," in value:
-            image_count += 1
-            return "[encoded image input]"
-        if isinstance(value, dict):
-            return {key: scrub(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [scrub(item) for item in value]
-        return value
-
-    text_tokens = max(1, len(json.dumps(scrub(payload), ensure_ascii=False)) // 4)
-    return text_tokens + image_count * ESTIMATED_IMAGE_INPUT_TOKENS
+    return estimate_json_tokens(payload)
 
 
 class OpenRouterAdapter:

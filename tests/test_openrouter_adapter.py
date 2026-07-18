@@ -12,12 +12,12 @@ from test_budget import make_manifest
 
 from aibb.harness import AibbHarnessEngine, build_context_envelope
 from aibb.harness.openrouter import (
-    ESTIMATED_IMAGE_INPUT_TOKENS,
     OpenRouterAdapter,
     _estimate_payload_tokens,
     _parse_tool_arguments,
     openrouter_model,
 )
+from aibb.harness.token_estimate import ESTIMATED_IMAGE_INPUT_TOKENS
 from aibb.runtime import BudgetLedger
 from aibb.sessions import SessionStore
 

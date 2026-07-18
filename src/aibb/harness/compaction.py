@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from aibb.harness.engine import EngineSnapshot
+from aibb.harness.token_estimate import estimate_json_tokens
 
 ELIGIBLE_ARCHIVE_TOOLS = {
     "archive_status",
@@ -40,7 +41,7 @@ def _sha256(value: object) -> str:
 
 
 def estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
-    return max(1, (len(_canonical_json(messages).encode("utf-8")) + 3) // 4)
+    return estimate_json_tokens(messages)
 
 
 class ElidedArchiveResult(BaseModel):
