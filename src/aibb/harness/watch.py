@@ -18,6 +18,7 @@ from rich.rule import Rule
 from aibb.runtime import RunManifest
 
 TERMINAL_EVENTS = {"run_completed", "run_suspended", "run_aborted", "run_failed"}
+FINAL_EVENTS = {"run_completed", "run_aborted", "run_failed"}
 
 
 def run_directories(state_root: Path) -> list[Path]:
@@ -133,15 +134,23 @@ class RunEventRenderer:
         self.seen_tool_results: set[str] = set()
 
     def _render_tool_results(self, messages: list[dict[str, Any]]) -> None:
+        results: list[tuple[str, Any]] = []
         for message in messages:
-            if message.get("role") != "tool":
-                continue
-            call_id = str(message.get("tool_call_id") or "")
+            if message.get("role") == "tool":
+                results.append((str(message.get("tool_call_id") or ""), message.get("content")))
+            elif message.get("role") == "user" and isinstance(message.get("content"), list):
+                results.extend(
+                    (str(block.get("tool_use_id") or ""), block.get("content"))
+                    for block in message["content"]
+                    if isinstance(block, dict) and block.get("type") == "tool_result"
+                )
+        for call_id, raw_content in results:
             if not call_id or call_id in self.seen_tool_results:
                 continue
             self.seen_tool_results.add(call_id)
             name = self.pending_tools.get(call_id, ("tool", {}))[0]
-            summary, details = _tool_result_summary(name, str(message.get("content") or ""))
+            content = _message_text(raw_content) if isinstance(raw_content, list) else str(raw_content or "")
+            summary, details = _tool_result_summary(name, content)
             lowered = summary.casefold()
             style = "red" if "error" in lowered or lowered.startswith("failed") else "green"
             self.console.print(f"[{style}]↳ {escape(name)}[/{style}] {escape(summary)}")
@@ -151,11 +160,20 @@ class RunEventRenderer:
     def _render_provider_response(self, payload: dict[str, Any]) -> None:
         response = payload.get("response") or {}
         choices = response.get("choices") or []
-        if not choices:
+        if choices:
+            message = choices[0].get("message") or {}
+        elif response.get("role") == "assistant" and isinstance(response.get("content"), list):
+            message = response
+        else:
             self.console.print("[red]Provider returned no choices.[/red]")
             return
-        message = choices[0].get("message") or {}
         reasoning = message.get("reasoning")
+        if not reasoning and isinstance(message.get("content"), list):
+            reasoning = "\n".join(
+                str(block.get("thinking") or "")
+                for block in message["content"]
+                if isinstance(block, dict) and block.get("type") == "thinking" and block.get("thinking")
+            )
         if self.show_reasoning and isinstance(reasoning, str) and reasoning.strip():
             self.console.print(
                 Panel(
@@ -166,15 +184,27 @@ class RunEventRenderer:
             )
         content = _message_text(message.get("content"))
         if content.strip():
-            self.console.print(Panel(Markdown(_shorten(content, 8_000)), title="Model", border_style="cyan"))
+            visible_content = _shorten(content, 8_000).replace("<", "\\<")
+            self.console.print(Panel(Markdown(visible_content), title="Model", border_style="cyan"))
+        calls: list[tuple[str, str, Any]] = []
         for call in message.get("tool_calls") or []:
             function = call.get("function") or {}
-            name = str(function.get("name") or "tool")
             try:
                 arguments = json.loads(function.get("arguments") or "{}")
             except json.JSONDecodeError:
                 arguments = {"raw": _shorten(str(function.get("arguments") or ""))}
-            call_id = str(call.get("id") or "")
+            calls.append((str(call.get("id") or ""), str(function.get("name") or "tool"), arguments))
+        if isinstance(message.get("content"), list):
+            calls.extend(
+                (
+                    str(block.get("id") or ""),
+                    str(block.get("name") or "tool"),
+                    block.get("arguments") if isinstance(block.get("arguments"), dict) else {},
+                )
+                for block in message["content"]
+                if isinstance(block, dict) and block.get("type") == "toolCall"
+            )
+        for call_id, name, arguments in calls:
             if call_id:
                 self.pending_tools[call_id] = (name, arguments)
             self.console.print(f"[bold yellow]→ {escape(name)}[/bold yellow]")
@@ -183,10 +213,14 @@ class RunEventRenderer:
         usage = response.get("usage") or {}
         if usage:
             cost = usage.get("cost")
+            if isinstance(cost, dict):
+                cost = cost.get("total")
             cost_text = f" · ${float(cost):.4f}" if isinstance(cost, (int, float)) else ""
+            input_tokens = usage.get("prompt_tokens", usage.get("input", "?"))
+            output_tokens = usage.get("completion_tokens", usage.get("output", "?"))
+            total_tokens = usage.get("total_tokens", usage.get("totalTokens", "?"))
             self.console.print(
-                f"[dim]{usage.get('prompt_tokens', '?')} input + {usage.get('completion_tokens', '?')} output "
-                f"= {usage.get('total_tokens', '?')} tokens{cost_text}[/dim]"
+                f"[dim]{input_tokens} input + {output_tokens} output = {total_tokens} tokens{cost_text}[/dim]"
             )
 
     def render(self, event: dict[str, Any]) -> bool:
@@ -237,7 +271,8 @@ class RunEventRenderer:
                 Panel(
                     (
                         f"[bold]{error_type}[/bold]\n{message}\n\n"
-                        "The failed call used no token or cost allowance; the run remains intact."
+                        "The failure is retained and the run remains resumable. Usage may be zero when the provider "
+                        "did not report it."
                     ),
                     title="Provider error",
                     border_style="red",
@@ -249,7 +284,7 @@ class RunEventRenderer:
         elif event_type in TERMINAL_EVENTS:
             reason = payload.get("reason") or event_type.replace("run_", "")
             self.console.print(Rule(f"{event_type.replace('_', ' ')} · {reason}", style="green"))
-            return True
+            return event_type in FINAL_EVENTS
         return False
 
 

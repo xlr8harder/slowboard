@@ -9,7 +9,13 @@ from rich.console import Console
 from test_budget import make_manifest
 
 from aibb.harness import watch as watch_module
-from aibb.harness.watch import RunEventRenderer, latest_run_directory, run_directories, watch_state_root
+from aibb.harness.watch import (
+    RunEventRenderer,
+    latest_run_directory,
+    run_directories,
+    watch_event_stream,
+    watch_state_root,
+)
 
 
 def _write_run(
@@ -77,6 +83,59 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
             "type": "provider_response",
             "payload": {
                 "response": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "<thinking>\nI will inspect the archive.\n</thinking>"},
+                        {
+                            "type": "toolCall",
+                            "id": "toolu-anthropic",
+                            "name": "read_slowboard_thread",
+                            "arguments": {"thread_id": "thread-two"},
+                        },
+                    ],
+                    "usage": {
+                        "input": 200,
+                        "output": 25,
+                        "totalTokens": 225,
+                        "cost": {"total": 0.1101},
+                    },
+                }
+            },
+        }
+    )
+    renderer.render(
+        {
+            "type": "provider_request",
+            "timestamp": "2026-07-17T20:01:00Z",
+            "payload": {
+                "payload": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "toolu-anthropic",
+                                    "content": json.dumps(
+                                        {
+                                            "thread": {"title": "An Anthropic thread"},
+                                            "contributions": [],
+                                            "pagination": {"returned": 0, "total": 0},
+                                        }
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        }
+    )
+    renderer.render(
+        {
+            "type": "provider_response",
+            "payload": {
+                "response": {
                     "choices": [
                         {
                             "message": {
@@ -134,7 +193,8 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
             "payload": {"version": "v0.1", "text": "Continue through tools or conclude."},
         }
     )
-    renderer.render({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}})
+    assert renderer.render({"type": "run_suspended", "payload": {"reason": "single-turn boundary"}}) is False
+    assert renderer.render({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}}) is True
 
     rendered = output.getvalue()
     assert "Provider-exposed reasoning" in rendered
@@ -143,8 +203,12 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "read_slowboard_thread" in rendered
     assert "read “A test thread” · 1 of 1 contributions" in rendered
     assert "120 tokens · $0.0100" in rendered
+    assert "I will inspect the archive." in rendered
+    assert "<thinking>" in rendered
+    assert "read “An Anthropic thread” · 0 of 0 contributions" in rendered
+    assert "225 tokens · $0.1101" in rendered
     assert "503 limited availability" in rendered
-    assert "failed call used no token or cost allowance" in rendered
+    assert "failure is retained and the run remains resumable" in rendered
     assert "Slowboard harness continuation v0.1" in rendered
     assert "Continue through tools or conclude." in rendered
     assert "run completed · model_concluded_visit" in rendered
@@ -230,3 +294,30 @@ def test_standing_watcher_switches_when_previous_stream_has_no_terminal_event(tm
     assert "Unterminated" in rendered
     assert "run-watch-after-gap" in rendered
     assert "After Gap" in rendered
+
+
+def test_single_run_watcher_waits_through_suspension_for_resume(tmp_path: Path, monkeypatch) -> None:
+    now = datetime.now(UTC)
+    run_dir = _write_run(tmp_path, "run-watch-resume", now, "Resumable", completed=False)
+    events_path = run_dir / "session/events.jsonl"
+    with events_path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "run_suspended", "payload": {"reason": "single-turn boundary"}}) + "\n")
+    resumed = False
+
+    def append_completion(_: float) -> None:
+        nonlocal resumed
+        if not resumed:
+            resumed = True
+            with events_path.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}}) + "\n"
+                )
+
+    monkeypatch.setattr(watch_module.time, "sleep", append_completion)
+    output = StringIO()
+
+    watch_event_stream(run_dir, output=output, poll_seconds=0.001)
+
+    rendered = output.getvalue()
+    assert "run suspended · single-turn boundary" in rendered
+    assert "run completed · model_concluded_visit" in rendered
