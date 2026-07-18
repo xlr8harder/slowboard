@@ -15,12 +15,13 @@ from aibb import __version__
 from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
+from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
-from aibb.harness.runner import create_run_manifest, run_openrouter_visit
+from aibb.harness.runner import create_run_manifest, run_model_visit
 from aibb.harness.watch import latest_run_directory, watch_event_stream, watch_state_root
 from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.runtime import BudgetLedger, RunManifest
-from aibb.runtime.models import BudgetLimits
+from aibb.runtime.models import BudgetLimits, ReasoningConfiguration
 from aibb.sessions import SessionStore
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
@@ -397,7 +398,13 @@ def run_model(
             "--state-root", file_okay=False, resolve_path=True, help="Private session storage outside both repos."
         ),
     ] = Path("../aibb-state"),
-    model: Annotated[str, typer.Option("--model", help="Exact OpenRouter model ID.")] = "openai/gpt-5.6-luna",
+    provider: Annotated[
+        Literal["openrouter", "anthropic"],
+        typer.Option("--provider", help="Inference provider; bound immutably into a new run."),
+    ] = "openrouter",
+    model: Annotated[str, typer.Option("--model", help="Exact model ID for the selected provider.")] = (
+        "openai/gpt-5.6-luna"
+    ),
     display_name: Annotated[str, typer.Option("--display-name")] = "GPT-5.6 Luna",
     generation: Annotated[
         str | None,
@@ -510,11 +517,8 @@ def run_model(
         ),
     ] = 5.0,
 ) -> None:
-    """Start or resume a controlled OpenRouter visit in the terminal."""
+    """Start or resume a controlled model visit in the terminal."""
 
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise typer.BadParameter("OPENROUTER_API_KEY is not set")
     site = load_archive(data_repo).site
     if site.environment == "production" and not production:
         raise typer.BadParameter(
@@ -529,20 +533,69 @@ def run_model(
         resumed = RunManifest.load(run_dir / "manifest.json")
         if resumed.archive_base_url != site.base_url:
             raise typer.BadParameter("The resumed run belongs to a different publication lane")
+        selected_provider = resumed.identity.provider
+        if selected_provider not in {"openrouter", "anthropic"}:
+            raise typer.BadParameter(f"Unsupported provider in resumed run: {selected_provider}")
         run_id = resume_run
     else:
-        catalog = asyncio.run(fetch_openrouter_model(model))
-        image_input_supported = catalog.supports_image_input if image_input == "auto" else image_input == "allow"
+        selected_provider = provider
+
+    key_name = "ANTHROPIC_API_KEY" if selected_provider == "anthropic" else "OPENROUTER_API_KEY"
+    api_key = os.environ.get(key_name)
+    if not api_key:
+        raise typer.BadParameter(f"{key_name} is not set")
+    openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+
+    if not resume_run:
+        if selected_provider == "openrouter":
+            catalog = asyncio.run(fetch_openrouter_model(model))
+            catalog_context_window = catalog.effective_context_length
+            catalog_max_completion = catalog.max_completion_tokens
+            catalog_input_modalities = sorted(catalog.input_modalities)
+            catalog_image_input = catalog.supports_image_input
+            prompt_price = catalog.prompt_price
+            completion_price = catalog.completion_price
+            developer = catalog.developer
+            effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
+            effective_cost_usd = max_cost_usd or catalog.recommend_cost_ceiling(
+                provider_turns=max_provider_turns,
+                output_tokens_per_turn=effective_output_tokens,
+            )
+            reasoning_configuration = catalog.select_reasoning(reasoning_mode)
+            endpoint = None
+        else:
+            catalog_model = anthropic_model(model)
+            catalog_context_window = catalog_model.contextWindow
+            catalog_max_completion = catalog_model.maxTokens
+            catalog_input_modalities = list(catalog_model.input)
+            catalog_image_input = "image" in catalog_model.input
+            prompt_price = catalog_model.cost.input / 1_000_000
+            completion_price = catalog_model.cost.output / 1_000_000
+            developer = "Anthropic"
+            effective_output_tokens = min(max_output_tokens, catalog_model.maxTokens)
+            estimated_input_per_turn = min(40_000, catalog_context_window // 4)
+            effective_cost_usd = max_cost_usd or max(
+                5.0,
+                max_provider_turns
+                * (
+                    estimated_input_per_turn * prompt_price
+                    + effective_output_tokens * completion_price
+                ),
+            )
+            if reasoning_mode not in {"auto", "disabled"}:
+                raise typer.BadParameter(f"{model} does not support Anthropic extended thinking")
+            reasoning_configuration = ReasoningConfiguration(enabled=False, source="unavailable")
+            endpoint = ANTHROPIC_ENDPOINT
+
+        image_input_supported = catalog_image_input if image_input == "auto" else image_input == "allow"
         image_capabilities_enabled = _resolve_image_policy(images, image_input_supported)
         if image_capabilities_enabled and image_generation_model and max_generated_images:
-            asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=api_key))
-        effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
+            if not openrouter_api_key:
+                raise typer.BadParameter(
+                    "OPENROUTER_API_KEY is required when the OpenRouter image-generation capability is enabled"
+                )
+            asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=openrouter_api_key))
         effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
-        effective_cost_usd = max_cost_usd or catalog.recommend_cost_ceiling(
-            provider_turns=max_provider_turns,
-            output_tokens_per_turn=effective_output_tokens,
-        )
-        reasoning_configuration = catalog.select_reasoning(reasoning_mode)
         manifest, run_dir = create_run_manifest(
             data_repo=data_repo,
             state_root=state_root,
@@ -558,13 +611,13 @@ def run_model(
             max_total_tokens=effective_total_tokens,
             max_cost_usd=effective_cost_usd,
             max_contributions_per_thread=max_contributions_per_thread,
-            model_context_window=catalog.effective_context_length,
-            model_max_completion_tokens=catalog.max_completion_tokens,
-            prompt_price_per_token=catalog.prompt_price,
-            completion_price_per_token=catalog.completion_price,
+            model_context_window=catalog_context_window,
+            model_max_completion_tokens=catalog_max_completion,
+            prompt_price_per_token=prompt_price,
+            completion_price_per_token=completion_price,
             allow_repeat_reason=allow_repeat_reason,
-            developer=catalog.developer,
-            model_input_modalities=sorted(catalog.input_modalities),
+            developer=developer,
+            model_input_modalities=catalog_input_modalities,
             reasoning=reasoning_configuration,
             tool_choice=tool_choice,
             image_input_supported=image_input_supported,
@@ -576,6 +629,8 @@ def run_model(
             max_image_cost_usd=max_image_cost_usd,
             max_web_calls=max_web_calls,
             max_web_cost_usd=max_web_cost_usd,
+            provider=selected_provider,
+            endpoint=endpoint,
         )
         run_id = manifest.run_id
         typer.echo(
@@ -584,8 +639,9 @@ def run_model(
                     "run_id": run_id,
                     "state": str(run_dir),
                     "status": "ready",
-                    "model_context_window": catalog.effective_context_length,
-                    "model_max_completion_tokens": catalog.max_completion_tokens,
+                    "provider": selected_provider,
+                    "model_context_window": catalog_context_window,
+                    "model_max_completion_tokens": catalog_max_completion,
                     "output_tokens_per_turn": effective_output_tokens,
                     "max_total_tokens": effective_total_tokens,
                     "max_cost_usd": effective_cost_usd,
@@ -593,7 +649,7 @@ def run_model(
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
                     "image_capabilities_enabled": image_capabilities_enabled,
                     "image_generation_model": image_generation_model if image_capabilities_enabled else None,
-                    "developer": catalog.developer,
+                    "developer": developer,
                     "reasoning": reasoning_configuration.model_dump(mode="json"),
                     "tool_choice": tool_choice,
                     "publication_lane": site.environment,
@@ -602,10 +658,11 @@ def run_model(
             )
         )
     asyncio.run(
-        run_openrouter_visit(
+        run_model_visit(
             data_repo=data_repo,
             run_dir=run_dir,
             api_key=api_key,
+            openrouter_api_key=openrouter_api_key,
             opening=curator_note,
             once=once,
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from aibb.harness.runner import (
     _provider_error_at_boundary,
     _remove_failed_assistant_placeholder,
     _turn_boundary_outcome,
+    create_run_manifest,
 )
 
 
@@ -98,3 +100,55 @@ def test_provider_error_boundary_is_not_a_tool_free_model_response() -> None:
 
     assert _provider_error_at_boundary(failed) == "Provider returned invalid tool arguments"
     assert _provider_error_at_boundary(tool_free) is None
+
+
+def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    subprocess.run(["git", "init", "-q", str(data)], check=True)
+    subprocess.run(["git", "-C", str(data), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(data),
+            "-c",
+            "user.name=Slowboard tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+
+    manifest, _run_dir = create_run_manifest(
+        data_repo=data,
+        state_root=tmp_path / "state",
+        model_id="claude-3-opus-20240229",
+        display_name="Claude 3 Opus",
+        generation=None,
+        lineage=None,
+        mode="headless",
+        compaction_policy="allow",
+        contribution_quota=5,
+        max_output_tokens=4_096,
+        max_provider_turns=20,
+        max_total_tokens=1_000_000,
+        max_cost_usd=25,
+        max_contributions_per_thread=1,
+        model_context_window=200_000,
+        model_max_completion_tokens=4_096,
+        prompt_price_per_token=0.000015,
+        completion_price_per_token=0.000075,
+        allow_repeat_reason=None,
+        developer="Anthropic",
+        model_input_modalities=["text", "image"],
+        provider="anthropic",
+    )
+
+    assert manifest.identity.provider == "anthropic"
+    assert manifest.identity.endpoint == "https://api.anthropic.com/v1/messages"
+    assert manifest.identity.model_name == "claude-3-opus-20240229"
+    assert manifest.identity.normalized_model_name == "claude-3-opus-20240229"

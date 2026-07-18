@@ -19,6 +19,7 @@ from mcp import StdioServerParameters
 from rich.console import Console
 
 from aibb.domain import load_archive
+from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, AnthropicAdapter, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_model
 from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
 from aibb.harness.context import build_context_envelope
@@ -132,6 +133,8 @@ def create_run_manifest(
     max_image_cost_usd: float = 2.0,
     max_web_calls: int = 40,
     max_web_cost_usd: float = 5.0,
+    provider: Literal["openrouter", "anthropic"] = "openrouter",
+    endpoint: str | None = None,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
     normalized_name = model_id
@@ -157,8 +160,10 @@ def create_run_manifest(
         archive_title=site.title,
         archive_base_url=site.base_url,
         identity=BoundModelIdentity(
-            provider="openrouter",
-            endpoint="https://openrouter.ai/api/v1/chat/completions",
+            provider=provider,
+            endpoint=endpoint or (
+                ANTHROPIC_ENDPOINT if provider == "anthropic" else "https://openrouter.ai/api/v1/chat/completions"
+            ),
             developer=developer,
             model_name=model_id,
             normalized_model_name=normalized_name,
@@ -337,43 +342,61 @@ async def _terminal_readline(prompt: str) -> str:
         loop.remove_reader(descriptor)
 
 
-async def run_openrouter_visit(
+async def run_model_visit(
     *,
     data_repo: Path,
     run_dir: Path,
     api_key: str,
+    openrouter_api_key: str | None = None,
     opening: str | None,
     once: bool,
     console: Console | None = None,
 ) -> str:
     console = console or Console()
     manifest = RunManifest.load(run_dir / "manifest.json")
-    catalog = await fetch_openrouter_model(manifest.identity.model_name)
     store = SessionStore(run_dir / "session", manifest.run_id)
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
-    max_output_tokens = catalog.clamp_output_tokens(manifest.max_output_tokens_per_turn)
-    model = openrouter_model(
-        manifest.identity.model_name,
-        context_window=min(
-            manifest.model_context_window or catalog.effective_context_length, catalog.effective_context_length
-        ),
-        max_tokens=max_output_tokens,
-        prompt_price_per_token=catalog.prompt_price,
-        completion_price_per_token=catalog.completion_price,
-        image_input_supported=manifest.image_input_supported,
-        reasoning_enabled=manifest.reasoning.enabled,
-    )
-    adapter = OpenRouterAdapter(
-        api_key=api_key,
-        ledger=ledger,
-        session=store,
-        max_output_tokens=max_output_tokens,
-        prompt_price_per_token=catalog.prompt_price,
-        completion_price_per_token=catalog.completion_price,
-        app_url=load_archive(data_repo).site.base_url,
-        reasoning_parameter=manifest.reasoning.request_parameter,
-        tool_choice=manifest.tool_choice,
-    )
+    if manifest.identity.provider == "openrouter":
+        catalog = await fetch_openrouter_model(manifest.identity.model_name)
+        max_output_tokens = catalog.clamp_output_tokens(manifest.max_output_tokens_per_turn)
+        model = openrouter_model(
+            manifest.identity.model_name,
+            context_window=min(
+                manifest.model_context_window or catalog.effective_context_length, catalog.effective_context_length
+            ),
+            max_tokens=max_output_tokens,
+            prompt_price_per_token=catalog.prompt_price,
+            completion_price_per_token=catalog.completion_price,
+            image_input_supported=manifest.image_input_supported,
+            reasoning_enabled=manifest.reasoning.enabled,
+        )
+        adapter: Any = OpenRouterAdapter(
+            api_key=api_key,
+            ledger=ledger,
+            session=store,
+            max_output_tokens=max_output_tokens,
+            prompt_price_per_token=catalog.prompt_price,
+            completion_price_per_token=catalog.completion_price,
+            app_url=load_archive(data_repo).site.base_url,
+            reasoning_parameter=manifest.reasoning.request_parameter,
+            tool_choice=manifest.tool_choice,
+        )
+        catalog_record = catalog.model_dump(mode="json")
+    elif manifest.identity.provider == "anthropic":
+        model = anthropic_model(manifest.identity.model_name)
+        context_window = min(manifest.model_context_window or model.contextWindow, model.contextWindow)
+        max_output_tokens = min(manifest.max_output_tokens_per_turn, model.maxTokens, context_window)
+        model = model.model_copy(update={"contextWindow": context_window, "maxTokens": max_output_tokens})
+        adapter = AnthropicAdapter(
+            api_key=api_key,
+            ledger=ledger,
+            session=store,
+            max_output_tokens=max_output_tokens,
+            tool_choice=manifest.tool_choice,
+        )
+        catalog_record = model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    else:
+        raise ValueError(f"Unsupported inference provider: {manifest.identity.provider}")
     warned_context_generations: set[int] = set()
 
     def apply_compaction(
@@ -443,8 +466,8 @@ async def run_openrouter_visit(
         return (run_dir / "mcp/visit-conclusion.json").exists()
 
     mcp_environment = _clean_mcp_environment()
-    if {"ask", "web", "generate_image"} & manifest.capability_budgets.keys():
-        mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = api_key
+    if openrouter_api_key and {"ask", "web", "generate_image"} & manifest.capability_budgets.keys():
+        mcp_environment["SLOWBOARD_OPENROUTER_API_KEY"] = openrouter_api_key
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
@@ -508,7 +531,7 @@ async def run_openrouter_visit(
                 "run_created",
                 {
                     "context_digest": envelope.digest,
-                    "model_catalog": catalog.model_dump(mode="json"),
+                    "model_catalog": catalog_record,
                     "manifest": manifest.model_dump(mode="json"),
                 },
                 "operator",
