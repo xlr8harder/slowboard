@@ -17,7 +17,9 @@ from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
 from aibb.harness.watch import latest_run_directory, watch_event_stream
 from aibb.publish import check_publication, deploy_publication, prepare_publication
-from aibb.runtime import RunManifest
+from aibb.runtime import BudgetLedger, RunManifest
+from aibb.runtime.models import BudgetLimits
+from aibb.sessions import SessionStore
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
 
@@ -69,6 +71,67 @@ def watch_run(
         )
     except KeyboardInterrupt:
         typer.echo("Stopped watching; the model run was not interrupted.")
+
+
+@app.command("extend-inference-budget")
+def extend_inference_budget(
+    run_id: Annotated[str, typer.Option("--run-id", help="Suspended run ID to extend.")],
+    max_total_tokens: Annotated[
+        int,
+        typer.Option(
+            "--max-total-tokens",
+            min=1_000,
+            help="New cumulative input and total-token ceilings; must exceed both existing ceilings.",
+        ),
+    ],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", min=8, help="Curator reason recorded in the append-only private session stream."),
+    ],
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root", exists=True, file_okay=False, resolve_path=True),
+    ] = Path("../aibb-state"),
+) -> None:
+    """Extend only a suspended run's operational inference-token ceiling."""
+
+    run_dir = state_root / run_id
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise typer.BadParameter(f"Unknown run: {run_id}")
+    if (run_dir / "mcp/visit-conclusion.json").exists():
+        raise typer.BadParameter("A concluded visit cannot receive an inference-budget extension")
+    manifest = RunManifest.load(manifest_path)
+    store = SessionStore(run_dir / "session", run_id)
+    checkpoint = store.read_checkpoint()
+    ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
+    previous, updated = ledger.extend_limits(
+        "inference",
+        BudgetLimits(max_input_tokens=max_total_tokens, max_total_tokens=max_total_tokens),
+    )
+    event = store.append(
+        "inference_budget_extended",
+        {
+            "reason": reason,
+            "original_manifest_unchanged": True,
+            "previous": previous.model_dump(mode="json"),
+            "updated": updated.model_dump(mode="json"),
+        },
+        "operator",
+    )
+    store.write_checkpoint(checkpoint.engine)
+    typer.echo(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "event_sequence": event.sequence,
+                "status": "extended",
+                "previous_max_total_tokens": previous.max_total_tokens,
+                "new_max_total_tokens": updated.max_total_tokens,
+            },
+            sort_keys=True,
+        )
+    )
 
 
 @publish_app.command("prepare")

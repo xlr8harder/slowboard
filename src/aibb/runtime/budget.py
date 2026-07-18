@@ -160,3 +160,21 @@ class BudgetLedger:
                 for usage_field, limit_field in _LIMIT_FIELDS.items()
             }
         return result
+
+    def extend_limits(self, name: str, extension: BudgetLimits) -> tuple[BudgetLimits, BudgetLimits]:
+        """Increase selected ceilings without resetting usage or weakening other limits."""
+        state = self.read()
+        account = self._account(state, name)
+        previous = account.limits.model_copy(deep=True)
+        updates = extension.model_dump(exclude_none=True)
+        if not updates:
+            raise ValueError("A budget extension must provide at least one finite ceiling")
+        for field, new_value in updates.items():
+            old_value = getattr(account.limits, field)
+            if old_value is None:
+                raise ValueError(f"{name} {field} is already unlimited")
+            if new_value <= old_value:
+                raise ValueError(f"{name} {field} extension must increase {old_value}, got {new_value}")
+            setattr(account.limits, field, new_value)
+        self._write(state)
+        return previous, account.limits.model_copy(deep=True)

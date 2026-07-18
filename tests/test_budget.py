@@ -78,3 +78,20 @@ def test_unknown_capability_is_not_implicitly_enabled(tmp_path: Path) -> None:
 
     with pytest.raises(BudgetExceededError, match="not enabled"):
         ledger.reserve("image_generation", "image-1", Usage(calls=1))
+
+
+def test_budget_extension_only_increases_selected_limits_and_preserves_usage(tmp_path: Path) -> None:
+    ledger = BudgetLedger(tmp_path / "budgets.json", make_manifest())
+    ledger.reserve("inference", "turn-1", Usage(calls=1, input_tokens=100, total_tokens=100))
+    ledger.reconcile("inference", "turn-1", Usage(calls=1, input_tokens=80, total_tokens=80))
+
+    previous, updated = ledger.extend_limits(
+        "inference",
+        BudgetLimits(max_input_tokens=40_000, max_total_tokens=48_000),
+    )
+
+    assert previous.max_input_tokens == 20_000
+    assert updated.max_input_tokens == 40_000
+    assert ledger.read().accounts["inference"].used.input_tokens == 80
+    with pytest.raises(ValueError, match="must increase"):
+        ledger.extend_limits("inference", BudgetLimits(max_total_tokens=24_000))
