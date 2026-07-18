@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import httpx
 from pydantic import BaseModel, ConfigDict
 
@@ -34,7 +36,18 @@ class OpenRouterModelRecord(BaseModel):
         prefix, separator, _remainder = self.name.partition(":")
         return prefix.strip() if separator and prefix.strip() else self.id.split("/", 1)[0]
 
-    def select_reasoning(self) -> ReasoningConfiguration:
+    def select_reasoning(
+        self,
+        override: Literal["auto", "enabled", "mandatory", "disabled"] = "auto",
+    ) -> ReasoningConfiguration:
+        if override != "auto":
+            enabled = override != "disabled"
+            return ReasoningConfiguration(
+                enabled=enabled,
+                mandatory=override == "mandatory",
+                request_parameter={"enabled": enabled},
+                source="curator-override",
+            )
         if not self.reasoning:
             return ReasoningConfiguration()
         mandatory = bool(self.reasoning.get("mandatory", False))

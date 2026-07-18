@@ -37,3 +37,13 @@ def test_non_reasoning_catalog_record_does_not_invent_a_mode() -> None:
     assert selected.enabled is False
     assert selected.request_parameter is None
     assert selected.source == "unavailable"
+
+
+def test_probe_informed_mandatory_reasoning_override_is_explicit() -> None:
+    selected = _record(None).select_reasoning("mandatory")
+
+    assert selected.enabled is True
+    assert selected.mandatory is True
+    assert selected.selected_effort is None
+    assert selected.request_parameter == {"enabled": True}
+    assert selected.source == "curator-override"

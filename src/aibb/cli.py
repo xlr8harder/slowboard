@@ -300,6 +300,16 @@ def run_model(
     max_provider_turns: Annotated[int, typer.Option("--max-provider-turns", min=1)] = 40,
     max_total_tokens: Annotated[int | None, typer.Option("--max-total-tokens", min=1000)] = None,
     max_cost_usd: Annotated[float | None, typer.Option("--max-cost-usd", min=0.001)] = None,
+    reasoning_mode: Annotated[
+        Literal["auto", "enabled", "mandatory", "disabled"],
+        typer.Option(
+            "--reasoning-mode",
+            help=(
+                "Use catalog detection or a recorded curator override. Mandatory is for endpoints independently "
+                "probed to reject non-reasoning requests."
+            ),
+        ),
+    ] = "auto",
     curator_note: Annotated[
         str | None,
         typer.Option(
@@ -397,6 +407,7 @@ def run_model(
             provider_turns=max_provider_turns,
             output_tokens_per_turn=effective_output_tokens,
         )
+        reasoning_configuration = catalog.select_reasoning(reasoning_mode)
         manifest, run_dir = create_run_manifest(
             data_repo=data_repo,
             state_root=state_root,
@@ -419,7 +430,7 @@ def run_model(
             allow_repeat_reason=allow_repeat_reason,
             developer=catalog.developer,
             model_input_modalities=sorted(catalog.input_modalities),
-            reasoning=catalog.select_reasoning(),
+            reasoning=reasoning_configuration,
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
             image_capabilities_enabled=image_capabilities_enabled,
@@ -447,7 +458,7 @@ def run_model(
                     "image_capabilities_enabled": image_capabilities_enabled,
                     "image_generation_model": image_generation_model if image_capabilities_enabled else None,
                     "developer": catalog.developer,
-                    "reasoning": catalog.select_reasoning().model_dump(mode="json"),
+                    "reasoning": reasoning_configuration.model_dump(mode="json"),
                     "publication_lane": site.environment,
                 },
                 sort_keys=True,

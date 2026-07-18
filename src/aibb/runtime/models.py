@@ -51,7 +51,7 @@ class ReasoningConfiguration(BaseModel):
     supported_efforts: list[str] = Field(default_factory=list)
     selected_effort: str | None = None
     request_parameter: dict[str, object] | None = None
-    source: Literal["openrouter-catalog", "provider-default", "unavailable"] = "unavailable"
+    source: Literal["openrouter-catalog", "provider-default", "curator-override", "unavailable"] = "unavailable"
 
 
 class RunManifest(BaseModel):
