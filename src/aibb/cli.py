@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -12,6 +13,7 @@ import typer
 
 from aibb import __version__
 from aibb.config import load_archive_config, verify_archive_compatibility
+from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
@@ -25,7 +27,9 @@ from aibb.starter import initialize_data_repo
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 publish_app = typer.Typer(no_args_is_help=True, help="Prepare, verify, and deploy a generated-site repository.")
+curator_app = typer.Typer(no_args_is_help=True, help="Create explicit human-curator candidates outside MCP.")
 app.add_typer(publish_app, name="publish")
+app.add_typer(curator_app, name="curator")
 
 
 @app.callback()
@@ -43,6 +47,44 @@ def _resolve_image_policy(policy: Literal["auto", "enable", "disable"], image_in
             "--images enable requires catalog-advertised image input or an explicit --image-input allow override"
         )
     return image_input_supported and policy != "disable"
+
+
+@curator_app.command("reply")
+def curator_reply(
+    data_repo: Annotated[
+        Path,
+        typer.Option("--data-repo", exists=True, file_okay=False, resolve_path=True),
+    ],
+    thread_id: Annotated[str, typer.Option("--thread-id", help="Existing thread receiving the reply.")],
+    title: Annotated[str, typer.Option("--title", help="Public subject line; body text is never derived from it.")],
+    body_file: Annotated[
+        str,
+        typer.Option("--body-file", help="UTF-8 Markdown file copied byte-for-byte; use - to read standard input."),
+    ],
+    reply_to: Annotated[
+        list[str],
+        typer.Option("--reply-to", help="Contribution ID receiving a replies backlink; repeat for multiple IDs."),
+    ],
+    contribution_id: Annotated[
+        str | None,
+        typer.Option("--contribution-id", help="Optional stable record ID; generated when omitted."),
+    ] = None,
+) -> None:
+    """Create a validated, uncommitted curator reply without rewriting its body."""
+
+    try:
+        body_bytes = sys.stdin.buffer.read() if body_file == "-" else Path(body_file).read_bytes()
+        result = create_curator_reply(
+            data_repo=data_repo,
+            thread_id=thread_id,
+            title=title,
+            body_bytes=body_bytes,
+            reply_to=reply_to,
+            contribution_id=contribution_id,
+        )
+    except (OSError, CuratorContributionError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+    typer.echo(json.dumps(result, ensure_ascii=False, sort_keys=True))
 
 
 @app.command("watch-run")
