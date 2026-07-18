@@ -15,7 +15,7 @@ from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.domain import load_archive
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.runner import create_run_manifest, run_openrouter_visit
-from aibb.harness.watch import latest_run_directory, watch_event_stream
+from aibb.harness.watch import latest_run_directory, watch_event_stream, watch_state_root
 from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.models import BudgetLimits
@@ -51,26 +51,49 @@ def watch_run(
         Path,
         typer.Option("--state-root", exists=True, file_okay=False, resolve_path=True),
     ] = Path("../aibb-state"),
-    run_id: Annotated[str | None, typer.Option("--run-id", help="Run ID; defaults to the newest run.")] = None,
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Watch exactly one run; omit for a standing monitor of the state root."),
+    ] = None,
     follow: Annotated[bool, typer.Option("--follow/--no-follow")] = True,
     from_start: Annotated[bool, typer.Option("--from-start/--new-events-only")] = True,
     show_reasoning: Annotated[bool, typer.Option("--show-reasoning/--hide-reasoning")] = True,
 ) -> None:
-    """Watch a private run as a readable local transcript of reasoning, tools, and usage."""
+    """Watch private runs as readable local transcripts of reasoning, tools, and usage."""
 
-    run_dir = state_root / run_id if run_id else latest_run_directory(state_root)
-    if not (run_dir / "manifest.json").exists():
-        raise typer.BadParameter(f"Unknown run: {run_dir.name}")
-    typer.echo(f"Watching {run_dir.name} from {run_dir / 'session/events.jsonl'}")
     try:
-        watch_event_stream(
-            run_dir,
-            follow=follow,
-            from_start=from_start,
-            show_reasoning=show_reasoning,
-        )
+        if run_id:
+            run_dir = state_root / run_id
+            if not (run_dir / "manifest.json").exists():
+                raise typer.BadParameter(f"Unknown run: {run_dir.name}")
+            typer.echo(f"Watching {run_dir.name} from {run_dir / 'session/events.jsonl'}")
+            watch_event_stream(
+                run_dir,
+                follow=follow,
+                from_start=from_start,
+                show_reasoning=show_reasoning,
+            )
+        elif follow:
+            typer.echo(f"Standing watch for Slowboard runs under {state_root}")
+            watch_state_root(
+                state_root,
+                follow=True,
+                from_start=from_start,
+                show_reasoning=show_reasoning,
+            )
+        else:
+            run_dir = latest_run_directory(state_root)
+            typer.echo(f"Watching newest run {run_dir.name} without following new events or runs")
+            watch_event_stream(
+                run_dir,
+                follow=False,
+                from_start=from_start,
+                show_reasoning=show_reasoning,
+            )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     except KeyboardInterrupt:
-        typer.echo("Stopped watching; the model run was not interrupted.")
+        typer.echo("Stopped watching; model runs were not interrupted.")
 
 
 @app.command("extend-inference-budget")

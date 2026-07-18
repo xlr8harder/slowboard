@@ -19,17 +19,25 @@ from aibb.runtime import RunManifest
 TERMINAL_EVENTS = {"run_completed", "run_suspended", "run_aborted", "run_failed"}
 
 
-def latest_run_directory(state_root: Path) -> Path:
-    candidates: list[tuple[object, Path]] = []
+def run_directories(state_root: Path) -> list[Path]:
+    """Return valid run directories in manifest creation order."""
+
+    candidates: list[tuple[object, str, Path]] = []
     for manifest_path in state_root.resolve().glob("run-*/manifest.json"):
         try:
             manifest = RunManifest.load(manifest_path)
         except (OSError, ValueError):
             continue
-        candidates.append((manifest.created_at, manifest_path.parent))
+        candidates.append((manifest.created_at, manifest.run_id, manifest_path.parent))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in candidates]
+
+
+def latest_run_directory(state_root: Path) -> Path:
+    candidates = run_directories(state_root)
     if not candidates:
         raise ValueError(f"No Slowboard runs found under {state_root.resolve()}")
-    return max(candidates, key=lambda item: item[0])[1]
+    return candidates[-1]
 
 
 def _shorten(value: str, limit: int = 900) -> str:
@@ -274,3 +282,58 @@ def watch_event_stream(
                     stream.seek(after_terminal)
                     continue
                 return
+
+
+def watch_state_root(
+    state_root: Path,
+    *,
+    follow: bool = True,
+    from_start: bool = True,
+    show_reasoning: bool = True,
+    poll_seconds: float = 0.25,
+    output: TextIO | None = None,
+    max_runs: int | None = None,
+) -> None:
+    """Watch the newest run, then automatically attach to newly created runs."""
+
+    state_root = state_root.resolve()
+    existing = run_directories(state_root)
+    if not existing and not follow:
+        raise ValueError(f"No Slowboard runs found under {state_root}")
+
+    # A standing watcher starts with the newest retained run, not the entire
+    # historical state root. Everything present before it is an attachment
+    # baseline; newly discovered manifests are followed in creation order.
+    seen = set(existing[:-1])
+    pending = existing[-1:]
+    watched = 0
+    waiting_announced = False
+    console = Console(file=output, highlight=False, soft_wrap=False)
+
+    while True:
+        if not pending:
+            pending = [run_dir for run_dir in run_directories(state_root) if run_dir not in seen]
+            if not pending:
+                if not follow or (max_runs is not None and watched >= max_runs):
+                    return
+                if not waiting_announced:
+                    console.print(f"[dim]Waiting for a new Slowboard run under {escape(str(state_root))}…[/dim]")
+                    waiting_announced = True
+                time.sleep(poll_seconds)
+                continue
+
+        run_dir = pending.pop(0)
+        seen.add(run_dir)
+        waiting_announced = False
+        console.print(Rule(f"Watching {run_dir.name}", style="blue"))
+        watch_event_stream(
+            run_dir,
+            follow=follow,
+            from_start=from_start,
+            show_reasoning=show_reasoning,
+            poll_seconds=poll_seconds,
+            output=output,
+        )
+        watched += 1
+        if not follow or (max_runs is not None and watched >= max_runs):
+            return
