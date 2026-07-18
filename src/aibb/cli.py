@@ -17,6 +17,11 @@ from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
+from aibb.harness.google_agent_platform import (
+    GROK_4_1_FAST_CONTEXT_WINDOW,
+    GROK_4_1_FAST_REASONING,
+    google_agent_platform_endpoint,
+)
 from aibb.harness.runner import create_run_manifest, run_model_visit
 from aibb.harness.watch import latest_run_directory, watch_event_stream, watch_state_root
 from aibb.publish import check_publication, deploy_publication, prepare_publication
@@ -399,7 +404,7 @@ def run_model(
         ),
     ] = Path("../aibb-state"),
     provider: Annotated[
-        Literal["openrouter", "anthropic"],
+        Literal["openrouter", "anthropic", "google_agent_platform"],
         typer.Option("--provider", help="Inference provider; bound immutably into a new run."),
     ] = "openrouter",
     model: Annotated[str, typer.Option("--model", help="Exact model ID for the selected provider.")] = (
@@ -556,13 +561,16 @@ def run_model(
         if resumed.archive_base_url != site.base_url:
             raise typer.BadParameter("The resumed run belongs to a different publication lane")
         selected_provider = resumed.identity.provider
-        if selected_provider not in {"openrouter", "anthropic"}:
+        if selected_provider not in {"openrouter", "anthropic", "google_agent_platform"}:
             raise typer.BadParameter(f"Unsupported provider in resumed run: {selected_provider}")
         run_id = resume_run
     else:
         selected_provider = provider
 
-    key_name = "ANTHROPIC_API_KEY" if selected_provider == "anthropic" else "OPENROUTER_API_KEY"
+    key_name = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google_agent_platform": "GOOGLE_API_KEY",
+    }.get(selected_provider, "OPENROUTER_API_KEY")
     api_key = os.environ.get(key_name)
     if not api_key:
         raise typer.BadParameter(f"{key_name} is not set")
@@ -599,7 +607,7 @@ def run_model(
             )
             reasoning_configuration = catalog.select_reasoning(reasoning_mode)
             endpoint = None
-        else:
+        elif selected_provider == "anthropic":
             catalog_model = anthropic_model(model)
             catalog_context_window = catalog_model.contextWindow
             catalog_max_completion = catalog_model.maxTokens
@@ -622,6 +630,35 @@ def run_model(
                 raise typer.BadParameter(f"{model} does not support Anthropic extended thinking")
             reasoning_configuration = ReasoningConfiguration(enabled=False, source="unavailable")
             endpoint = ANTHROPIC_ENDPOINT
+        else:
+            if model != GROK_4_1_FAST_REASONING:
+                raise typer.BadParameter(
+                    "The Google Agent Platform adapter currently supports only " + GROK_4_1_FAST_REASONING
+                )
+            project_id = os.environ.get("GOOGLE_AGENT_PLATFORM_PROJECT_ID")
+            if not project_id:
+                raise typer.BadParameter("GOOGLE_AGENT_PLATFORM_PROJECT_ID is not set")
+            endpoint = google_agent_platform_endpoint(
+                project_id=project_id,
+                location=os.environ.get("GOOGLE_AGENT_PLATFORM_LOCATION") or "global",
+                endpoint=os.environ.get("GOOGLE_AGENT_PLATFORM_ENDPOINT") or "openapi",
+            )
+            catalog_context_window = GROK_4_1_FAST_CONTEXT_WINDOW
+            catalog_max_completion = None
+            catalog_input_modalities = ["text", "image"]
+            catalog_image_input = True
+            prompt_price = 0.0
+            completion_price = 0.0
+            developer = "xAI"
+            effective_output_tokens = max_output_tokens
+            effective_cost_usd = max_cost_usd or 5.0
+            if reasoning_mode == "disabled":
+                raise typer.BadParameter(f"{model} is an explicit reasoning model and cannot disable reasoning")
+            reasoning_configuration = ReasoningConfiguration(
+                enabled=True,
+                mandatory=True,
+                source="provider-default" if reasoning_mode == "auto" else "curator-override",
+            )
 
         image_input_supported = catalog_image_input if image_input == "auto" else image_input == "allow"
         image_capabilities_enabled = _resolve_image_policy(images, image_input_supported)

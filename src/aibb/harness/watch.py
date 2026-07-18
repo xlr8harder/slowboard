@@ -240,8 +240,23 @@ class RunEventRenderer:
             input_tokens = usage.get("prompt_tokens", usage.get("input", "?"))
             output_tokens = usage.get("completion_tokens", usage.get("output", "?"))
             total_tokens = usage.get("total_tokens", usage.get("totalTokens", "?"))
+            reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+            reasoning_text = ""
+            if isinstance(reasoning_tokens, int) and reasoning_tokens > 0:
+                separate = (
+                    isinstance(input_tokens, int)
+                    and isinstance(output_tokens, int)
+                    and isinstance(total_tokens, int)
+                    and total_tokens == input_tokens + output_tokens + reasoning_tokens
+                )
+                reasoning_text = (
+                    f" + {reasoning_tokens} hidden reasoning"
+                    if separate
+                    else f" ({reasoning_tokens} reasoning within output)"
+                )
             self.console.print(
-                f"[dim]{input_tokens} input + {output_tokens} output = {total_tokens} tokens{cost_text}[/dim]"
+                f"[dim]{input_tokens} input + {output_tokens} output{reasoning_text} = "
+                f"{total_tokens} tokens{cost_text}[/dim]"
             )
 
     def render(self, event: dict[str, Any]) -> bool:

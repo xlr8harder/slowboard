@@ -216,6 +216,31 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "run completed · model_concluded_visit · Example Model (example/model)" in rendered
 
 
+def test_run_event_renderer_labels_google_hidden_reasoning_separately() -> None:
+    output = StringIO()
+    renderer = RunEventRenderer(Console(file=output, color_system=None, width=120), show_reasoning=True)
+
+    renderer.render(
+        {
+            "type": "provider_response",
+            "payload": {
+                "response": {
+                    "choices": [{"message": {"role": "assistant", "content": ""}}],
+                    "usage": {
+                        "prompt_tokens": 863,
+                        "completion_tokens": 25,
+                        "completion_tokens_details": {"reasoning_tokens": 113},
+                        "total_tokens": 1001,
+                        "cost_in_usd_ticks": 0,
+                    },
+                }
+            },
+        }
+    )
+
+    assert "863 input + 25 output + 113 hidden reasoning = 1001 tokens" in output.getvalue()
+
+
 def test_run_directories_are_manifest_ordered_and_ignore_invalid_entries(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     older = _write_completed_run(tmp_path, "run-watch-older", now, "Older")

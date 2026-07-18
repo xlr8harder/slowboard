@@ -24,6 +24,7 @@ from aibb.harness.catalog import fetch_openrouter_model
 from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
 from aibb.harness.context import build_context_envelope
 from aibb.harness.engine import AibbHarnessEngine, EngineSnapshot
+from aibb.harness.google_agent_platform import GoogleAgentPlatformAdapter, google_agent_platform_model
 from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
@@ -133,7 +134,7 @@ def create_run_manifest(
     max_image_cost_usd: float = 2.0,
     max_web_calls: int = 40,
     max_web_cost_usd: float = 5.0,
-    provider: Literal["openrouter", "anthropic"] = "openrouter",
+    provider: Literal["openrouter", "anthropic", "google_agent_platform"] = "openrouter",
     endpoint: str | None = None,
     system_prompt_text: str | None = None,
     system_prompt_label: str | None = None,
@@ -160,6 +161,12 @@ def create_run_manifest(
         raise ValueError("A custom system prompt requires both text and a label")
     if system_prompt_text is None and system_prompt_source_url is not None:
         raise ValueError("A custom system-prompt source URL requires prompt text")
+    resolved_endpoint = endpoint or {
+        "anthropic": ANTHROPIC_ENDPOINT,
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    }.get(provider)
+    if not resolved_endpoint:
+        raise ValueError(f"An explicit endpoint is required for inference provider {provider}")
     encoded_system_prompt = system_prompt_text.encode("utf-8") if system_prompt_text is not None else None
     system_prompt = (
         SystemPromptConfiguration(
@@ -180,9 +187,7 @@ def create_run_manifest(
         archive_base_url=site.base_url,
         identity=BoundModelIdentity(
             provider=provider,
-            endpoint=endpoint or (
-                ANTHROPIC_ENDPOINT if provider == "anthropic" else "https://openrouter.ai/api/v1/chat/completions"
-            ),
+            endpoint=resolved_endpoint,
             developer=developer,
             model_name=model_id,
             normalized_model_name=normalized_name,
@@ -444,6 +449,22 @@ async def run_model_visit(
         model = model.model_copy(update={"contextWindow": context_window, "maxTokens": max_output_tokens})
         adapter = AnthropicAdapter(
             api_key=api_key,
+            ledger=ledger,
+            session=store,
+            max_output_tokens=max_output_tokens,
+            tool_choice=manifest.tool_choice,
+        )
+        catalog_record = model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    elif manifest.identity.provider == "google_agent_platform":
+        max_output_tokens = manifest.max_output_tokens_per_turn
+        model = google_agent_platform_model(
+            manifest.identity.model_name,
+            endpoint=manifest.identity.endpoint,
+            max_tokens=max_output_tokens,
+        )
+        adapter = GoogleAgentPlatformAdapter(
+            api_key=api_key,
+            endpoint=manifest.identity.endpoint,
             ledger=ledger,
             session=store,
             max_output_tokens=max_output_tokens,

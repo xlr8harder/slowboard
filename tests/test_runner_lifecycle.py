@@ -186,3 +186,60 @@ def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path
     assert manifest.system_prompt.label == "Test prompt v1"
     assert manifest.system_prompt.source_url == "https://example.invalid/prompts/v1.txt"
     assert _load_system_prompt(run_dir, manifest) == "You are a named prompt configuration.\n"
+
+
+def test_manifest_binds_google_agent_platform_route(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    subprocess.run(["git", "init", "-q", str(data)], check=True)
+    subprocess.run(["git", "-C", str(data), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(data),
+            "-c",
+            "user.name=Slowboard tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    endpoint = (
+        "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/"
+        "endpoints/openapi/chat/completions"
+    )
+
+    manifest, _run_dir = create_run_manifest(
+        data_repo=data,
+        state_root=tmp_path / "state",
+        model_id="xai/grok-4.1-fast-reasoning",
+        display_name="Grok 4.1 Fast Thinking",
+        generation=None,
+        lineage=None,
+        mode="headless",
+        compaction_policy="deny",
+        contribution_quota=5,
+        max_output_tokens=16_000,
+        max_provider_turns=40,
+        max_total_tokens=2_400_000,
+        max_cost_usd=5,
+        max_contributions_per_thread=1,
+        model_context_window=128_000,
+        model_max_completion_tokens=None,
+        prompt_price_per_token=0,
+        completion_price_per_token=0,
+        allow_repeat_reason=None,
+        developer="xAI",
+        model_input_modalities=["text", "image"],
+        provider="google_agent_platform",
+        endpoint=endpoint,
+    )
+
+    assert manifest.identity.provider == "google_agent_platform"
+    assert manifest.identity.endpoint == endpoint
+    assert manifest.identity.developer == "xAI"
+    assert manifest.identity.model_name == "xai/grok-4.1-fast-reasoning"

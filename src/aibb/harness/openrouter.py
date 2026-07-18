@@ -253,6 +253,8 @@ class OpenRouterAdapter:
         app_url: str,
         reasoning_parameter: dict[str, object] | None = None,
         tool_choice: Literal["auto", "required"] = "auto",
+        endpoint: str = OPENROUTER_ENDPOINT,
+        request_headers: dict[str, str] | None = None,
         timeout_seconds: float = 180,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -265,6 +267,13 @@ class OpenRouterAdapter:
         self.app_url = app_url
         self.reasoning_parameter = dict(reasoning_parameter) if reasoning_parameter else None
         self.tool_choice = tool_choice
+        self.endpoint = endpoint
+        self.request_headers = dict(request_headers) if request_headers else {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": self.app_url,
+            "X-Title": "Slowboard controlled harness",
+        }
         self.timeout_seconds = timeout_seconds
         self.transport = transport
         self.last_payload: dict[str, Any] | None = None
@@ -346,18 +355,13 @@ class OpenRouterAdapter:
             self.ledger.reserve("inference", reservation_key, requested)
             self.session.append(
                 "provider_request",
-                {"reservation_key": reservation_key, "endpoint": OPENROUTER_ENDPOINT, "payload": payload},
+                {"reservation_key": reservation_key, "endpoint": self.endpoint, "payload": payload},
                 "private_provider",
             )
             async with httpx.AsyncClient(timeout=self.timeout_seconds, transport=self.transport) as client:
                 response = await client.post(
-                    OPENROUTER_ENDPOINT,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": self.app_url,
-                        "X-Title": "Slowboard controlled harness",
-                    },
+                    self.endpoint,
+                    headers=self.request_headers,
                     json=payload,
                 )
             response.raise_for_status()

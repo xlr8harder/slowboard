@@ -782,7 +782,11 @@ def create_server(
                     "source": (
                         "OpenRouter live model catalog at run creation"
                         if identity.provider == "openrouter"
-                        else "version-pinned Harn provider catalog at run creation"
+                        else (
+                            "Google model card plus live route probe at run creation"
+                            if identity.provider == "google_agent_platform"
+                            else "version-pinned Harn provider catalog at run creation"
+                        )
                     ),
                     "context_window_tokens": state.manifest.model_context_window,
                     "provider_max_completion_tokens": state.manifest.model_max_completion_tokens,
