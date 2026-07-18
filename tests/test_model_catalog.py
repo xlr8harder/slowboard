@@ -47,3 +47,21 @@ def test_probe_informed_mandatory_reasoning_override_is_explicit() -> None:
     assert selected.selected_effort is None
     assert selected.request_parameter == {"enabled": True}
     assert selected.source == "curator-override"
+
+
+def test_provider_context_ceiling_clamps_model_catalog_maximum() -> None:
+    record = _record(None).model_copy(
+        update={
+            "context_length": 1_048_576,
+            "top_provider": {"context_length": 524_288, "max_completion_tokens": None},
+        }
+    )
+
+    assert record.effective_context_length == 524_288
+    assert record.clamp_output_tokens(600_000) == 520_192
+
+
+def test_missing_provider_context_uses_model_catalog_maximum() -> None:
+    record = _record(None)
+
+    assert record.effective_context_length == 100_000

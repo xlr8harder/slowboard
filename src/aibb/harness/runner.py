@@ -340,7 +340,9 @@ async def run_openrouter_visit(
     max_output_tokens = catalog.clamp_output_tokens(manifest.max_output_tokens_per_turn)
     model = openrouter_model(
         manifest.identity.model_name,
-        context_window=catalog.context_length,
+        context_window=min(
+            manifest.model_context_window or catalog.effective_context_length, catalog.effective_context_length
+        ),
         max_tokens=max_output_tokens,
         prompt_price_per_token=catalog.prompt_price,
         completion_price_per_token=catalog.completion_price,

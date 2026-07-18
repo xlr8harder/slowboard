@@ -36,6 +36,16 @@ class OpenRouterModelRecord(BaseModel):
         prefix, separator, _remainder = self.name.partition(":")
         return prefix.strip() if separator and prefix.strip() else self.id.split("/", 1)[0]
 
+    @property
+    def effective_context_length(self) -> int:
+        """Clamp the model maximum to the currently selected provider ceiling."""
+
+        provider_value = self.top_provider.get("context_length")
+        if provider_value is None:
+            return self.context_length
+        provider_context_length = int(provider_value)
+        return min(self.context_length, provider_context_length) if provider_context_length > 0 else self.context_length
+
     def select_reasoning(
         self,
         override: Literal["auto", "enabled", "mandatory", "disabled"] = "auto",
@@ -95,11 +105,12 @@ class OpenRouterModelRecord(BaseModel):
         return int(value) if value is not None else None
 
     def clamp_output_tokens(self, requested: int) -> int:
-        ceiling = self.max_completion_tokens or self.context_length
-        return min(requested, ceiling, max(1, self.context_length - 4096))
+        context_length = self.effective_context_length
+        ceiling = self.max_completion_tokens or context_length
+        return min(requested, ceiling, max(1, context_length - 4096))
 
     def recommend_cost_ceiling(self, *, provider_turns: int, output_tokens_per_turn: int) -> float:
-        average_input_tokens = min(60_000, max(8_000, self.context_length // 8))
+        average_input_tokens = min(60_000, max(8_000, self.effective_context_length // 8))
         average_output_tokens = min(4_000, output_tokens_per_turn)
         estimate = provider_turns * (
             average_input_tokens * self.prompt_price + average_output_tokens * self.completion_price
