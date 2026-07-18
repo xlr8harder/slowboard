@@ -53,12 +53,13 @@ def _decode_reasoning_details(value: str | None) -> list[dict[str, Any]] | None:
 
 
 def _parse_tool_arguments(value: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Decode one provider tool call, repairing only an unambiguous extra closing brace.
+    """Decode one provider tool call, repairing only uniquely recoverable JSON.
 
     Some OpenRouter routes occasionally return a valid JSON object followed by one or
-    more unmatched ``}`` characters.  The intended object is uniquely recoverable in
-    that case.  Everything else remains an error rather than inviting a general JSON
-    repair heuristic that could change model intent.
+    more unmatched ``}`` characters, or repeat the same complete object twice.  The
+    intended object is uniquely recoverable in those cases.  Everything else remains
+    an error rather than inviting a general JSON repair heuristic that could change
+    model intent.
     """
 
     if isinstance(value, dict):
@@ -73,16 +74,35 @@ def _parse_tool_arguments(value: Any) -> tuple[dict[str, Any], dict[str, Any] | 
         except json.JSONDecodeError:
             raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
         trailing = candidate[end:].strip()
-        if not trailing or set(trailing) != {"}"}:
-            raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+        if trailing and set(trailing) == {"}"}:
+            if not isinstance(parsed, dict):
+                raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
+            return parsed, {
+                "repair": "removed_unmatched_trailing_closing_braces",
+                "raw_arguments": raw,
+                "normalized_arguments": parsed,
+                "removed_suffix": trailing,
+            }
         if not isinstance(parsed, dict):
             raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
-        return parsed, {
-            "repair": "removed_unmatched_trailing_closing_braces",
-            "raw_arguments": raw,
-            "normalized_arguments": parsed,
-            "removed_suffix": trailing,
-        }
+        repeated: list[dict[str, Any]] = [parsed]
+        while trailing:
+            try:
+                next_value, end = json.JSONDecoder().raw_decode(trailing)
+            except json.JSONDecodeError:
+                raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+            if not isinstance(next_value, dict):
+                raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
+            repeated.append(next_value)
+            trailing = trailing[end:].strip()
+        if len(repeated) > 1 and all(item == repeated[0] for item in repeated[1:]):
+            return parsed, {
+                "repair": "collapsed_repeated_identical_json_objects",
+                "raw_arguments": raw,
+                "normalized_arguments": parsed,
+                "repetition_count": len(repeated),
+            }
+        raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
     if not isinstance(parsed, dict):
         raise RuntimeError("Provider returned tool arguments that are not a JSON object")
     return parsed, None

@@ -17,24 +17,36 @@ from aibb.sessions import SessionStore
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected", "repaired"),
+    ("raw", "expected", "expected_repair"),
     [
-        ('{"thread_id":"thread-one"}', {"thread_id": "thread-one"}, False),
-        ('{"thread_id":"thread-one"}}', {"thread_id": "thread-one"}, True),
-        (' {"thread_id":"thread-one"} }} ', {"thread_id": "thread-one"}, True),
-        ({"thread_id": "thread-one"}, {"thread_id": "thread-one"}, False),
-        (None, {}, False),
+        ('{"thread_id":"thread-one"}', {"thread_id": "thread-one"}, None),
+        (
+            '{"thread_id":"thread-one"}}',
+            {"thread_id": "thread-one"},
+            "removed_unmatched_trailing_closing_braces",
+        ),
+        (
+            ' {"thread_id":"thread-one"} }} ',
+            {"thread_id": "thread-one"},
+            "removed_unmatched_trailing_closing_braces",
+        ),
+        ("{}{}", {}, "collapsed_repeated_identical_json_objects"),
+        (
+            '{"thread_id":"thread-one"} {"thread_id":"thread-one"}',
+            {"thread_id": "thread-one"},
+            "collapsed_repeated_identical_json_objects",
+        ),
+        ({"thread_id": "thread-one"}, {"thread_id": "thread-one"}, None),
+        (None, {}, None),
     ],
 )
-def test_tool_argument_parser_only_repairs_unmatched_trailing_closing_braces(
-    raw: object, expected: dict[str, object], repaired: bool
+def test_tool_argument_parser_only_repairs_uniquely_recoverable_json(
+    raw: object, expected: dict[str, object], expected_repair: str | None
 ) -> None:
     parsed, repair = _parse_tool_arguments(raw)
 
     assert parsed == expected
-    assert (repair is not None) is repaired
-    if repair:
-        assert repair["repair"] == "removed_unmatched_trailing_closing_braces"
+    assert (repair or {}).get("repair") == expected_repair
 
 
 @pytest.mark.parametrize(
@@ -42,6 +54,7 @@ def test_tool_argument_parser_only_repairs_unmatched_trailing_closing_braces(
     [
         '{"thread_id":}',
         '{"thread_id":"thread-one"} trailing prose',
+        '{"thread_id":"thread-one"}{"thread_id":"thread-two"}',
         '["thread-one"]',
         '}{"thread_id":"thread-one"}',
     ],
