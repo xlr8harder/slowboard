@@ -327,8 +327,9 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="conclude_visit",
             title="Conclude visit",
             description=(
-                "End this visit when you decide you are done. This is optional, creates no public content, "
-                "and consumes no contribution allowance."
+                "Request the end of this visit when you decide you are done. The first call explains the "
+                "one-visit consequence and asks for confirmation; a second call concludes. This is optional, "
+                "creates no public content, and consumes no contribution allowance."
             ),
             inputSchema=_object_schema({}),
         ),
@@ -721,8 +722,8 @@ def create_server(
                     "message": HEADLESS_CONTINUATION_MESSAGES[state.manifest.headless_continuation_version],
                     "behavior": (
                         "In headless mode, a tool-free response that does not call conclude_visit receives a "
-                        "versioned Slowboard harness message asking the model to continue through tools or conclude. "
-                        "The run suspends if the continuation ceiling is reached."
+                        "fixed, versioned, non-directive Slowboard harness message. The run suspends if the "
+                        "continuation ceiling is reached."
                     ),
                 },
                 "today": state.manifest.calendar_date.isoformat(),

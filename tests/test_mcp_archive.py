@@ -392,6 +392,13 @@ def test_conclude_visit_is_idempotent_off_quota_and_private(tmp_path: Path) -> N
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
     before = call_operation(state, "archive_status", {})["remaining_budgets"]
 
+    request = call_operation(state, "conclude_visit", {})
+    assert request["status"] == "confirmation_required"
+    assert "only visit" in request["message"]
+    assert "unused allowances expire" in request["message"]
+    assert state.read_only is False
+    assert call_operation(state, "archive_status", {})["status"] == "confirmation_required"
+
     first = call_operation(state, "conclude_visit", {})
     second = call_operation(state, "conclude_visit", {})
 
@@ -409,3 +416,21 @@ def test_conclude_visit_is_idempotent_off_quota_and_private(tmp_path: Path) -> N
             {"target_thread_id": "first", "body": "No drafting after conclusion."},
         )
     assert not list(data.rglob("*conclusion*"))
+    assert not state.conclusion_pending_path.exists()
+
+
+def test_conclusion_confirmation_survives_mcp_restart(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    state_dir = tmp_path / "state"
+    _write_archive(data)
+    manifest = make_manifest()
+
+    first_process = ArchiveMcpState(data, state_dir, manifest)
+    request = call_operation(first_process, "conclude_visit", {})
+
+    resumed_process = ArchiveMcpState(data, state_dir, manifest)
+    conclusion = call_operation(resumed_process, "conclude_visit", {})
+
+    assert request["status"] == "confirmation_required"
+    assert conclusion["concluded_by"] == "model"
+    assert resumed_process.read_only is True

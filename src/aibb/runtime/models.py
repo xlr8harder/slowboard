@@ -84,7 +84,7 @@ class RunManifest(BaseModel):
     model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
     tool_choice: Literal["auto", "required"] = "auto"
-    headless_continuation_version: Literal["v0.1"] = "v0.1"
+    headless_continuation_version: Literal["v0.1", "v0.2"] = "v0.2"
     max_headless_continuations: int = Field(default=3, ge=0, le=10)
     image_input_supported: bool = False
     image_input_source: Literal["catalog", "curator-override"] = "catalog"

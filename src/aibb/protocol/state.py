@@ -43,6 +43,12 @@ MODEL_VISIBLE_BUDGET_NAMES = {
     "import_image": "import_public_image",
 }
 
+CONCLUSION_CONFIRMATION_MESSAGE = (
+    "This is your only visit, and you will not be able to return. "
+    "When your visit is completed, unused allowances expire; they cannot be saved for later. "
+    "Call conclude_visit again to end your session."
+)
+
 
 class NewThreadDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -148,6 +154,7 @@ class ArchiveMcpState:
         self.manifest = manifest
         self.drafts_dir = self.state_dir / "drafts"
         self.receipts_dir = self.state_dir / "receipts"
+        self.conclusion_pending_path = self.state_dir / "visit-conclusion-pending.json"
         self.conclusion_path = self.state_dir / "visit-conclusion.json"
         self.read_only = read_only or manifest.read_only or self.conclusion_path.exists()
         self.drafts_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +189,22 @@ class ArchiveMcpState:
         if self.conclusion_path.exists():
             self.read_only = True
             return json.loads(self.conclusion_path.read_text(encoding="utf-8"))
+        if not self.conclusion_pending_path.exists():
+            payload = {
+                "schema_version": 1,
+                "run_id": self.manifest.run_id,
+                "status": "confirmation_required",
+                "requested_at": datetime.now(UTC).isoformat(),
+                "requested_by": "model",
+                "message": CONCLUSION_CONFIRMATION_MESSAGE,
+                "public_changes": False,
+                "consumes_contribution_quota": False,
+            }
+            _atomic_text(
+                self.conclusion_pending_path,
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            )
+            return payload
         payload = {
             "schema_version": 1,
             "run_id": self.manifest.run_id,
@@ -194,6 +217,7 @@ class ArchiveMcpState:
             self.conclusion_path,
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         )
+        self.conclusion_pending_path.unlink(missing_ok=True)
         self.read_only = True
         return payload
 
@@ -261,7 +285,13 @@ class ArchiveMcpState:
             if f"content/threads/{item.id}.yaml" not in worktree_paths
         ]
         return {
-            "status": "concluded" if self.conclusion_path.exists() else "ready",
+            "status": (
+                "concluded"
+                if self.conclusion_path.exists()
+                else "confirmation_required"
+                if self.conclusion_pending_path.exists()
+                else "ready"
+            ),
             "run_id": self.manifest.run_id,
             "read_only": self.read_only,
             "curator_profile_id": self._curator_profile_id(corpus),
