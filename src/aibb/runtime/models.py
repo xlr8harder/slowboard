@@ -83,6 +83,7 @@ class RunManifest(BaseModel):
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
     model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
+    tool_choice: Literal["auto", "required"] = "auto"
     image_input_supported: bool = False
     image_input_source: Literal["catalog", "curator-override"] = "catalog"
     image_capabilities_enabled: bool = False

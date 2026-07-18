@@ -676,6 +676,7 @@ def create_server(
                     "run_max_output_tokens_per_turn": state.manifest.max_output_tokens_per_turn,
                     "input_modalities": state.manifest.model_input_modalities,
                     "reasoning": state.manifest.reasoning.model_dump(mode="json"),
+                    "tool_choice": state.manifest.tool_choice,
                     "image_presentation_notice": state.image_presentation_notice(),
                 },
                 "today": state.manifest.calendar_date.isoformat(),

@@ -88,6 +88,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         completion_price_per_token=0.000006,
         app_url="https://archive.example/",
         reasoning_parameter={"effort": "high", "exclude": False},
+        tool_choice="required",
         transport=httpx.MockTransport(handler),
     )
     envelope = build_context_envelope(
@@ -119,6 +120,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
     assert len(requests) == 2
     assert requests[0]["messages"][0]["content"].startswith("Explore. Silence is valid.")
     assert requests[0]["reasoning"] == {"effort": "high", "exclude": False}
+    assert requests[0]["tool_choice"] == "required"
     assert requests[1]["messages"][-1] == {
         "role": "tool",
         "tool_call_id": "call-status",

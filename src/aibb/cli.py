@@ -396,6 +396,13 @@ def run_model(
             ),
         ),
     ] = "auto",
+    tool_choice: Annotated[
+        Literal["auto", "required"],
+        typer.Option(
+            "--tool-choice",
+            help="Provider tool-choice policy recorded in the immutable run scope.",
+        ),
+    ] = "auto",
     curator_note: Annotated[
         str | None,
         typer.Option(
@@ -517,6 +524,7 @@ def run_model(
             developer=catalog.developer,
             model_input_modalities=sorted(catalog.input_modalities),
             reasoning=reasoning_configuration,
+            tool_choice=tool_choice,
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
             image_capabilities_enabled=image_capabilities_enabled,
@@ -545,6 +553,7 @@ def run_model(
                     "image_generation_model": image_generation_model if image_capabilities_enabled else None,
                     "developer": catalog.developer,
                     "reasoning": reasoning_configuration.model_dump(mode="json"),
+                    "tool_choice": tool_choice,
                     "publication_lane": site.environment,
                 },
                 sort_keys=True,

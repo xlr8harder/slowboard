@@ -6,7 +6,7 @@ import asyncio
 import base64
 import json
 import time
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from harn_ai.types import (
@@ -196,6 +196,7 @@ class OpenRouterAdapter:
         completion_price_per_token: float,
         app_url: str,
         reasoning_parameter: dict[str, object] | None = None,
+        tool_choice: Literal["auto", "required"] = "auto",
         timeout_seconds: float = 180,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -207,6 +208,7 @@ class OpenRouterAdapter:
         self.completion_price_per_token = completion_price_per_token
         self.app_url = app_url
         self.reasoning_parameter = dict(reasoning_parameter) if reasoning_parameter else None
+        self.tool_choice = tool_choice
         self.timeout_seconds = timeout_seconds
         self.transport = transport
         self.last_payload: dict[str, Any] | None = None
@@ -246,7 +248,7 @@ class OpenRouterAdapter:
                 }
                 for tool in (context.tools or [])
             ],
-            "tool_choice": "auto",
+            "tool_choice": self.tool_choice,
             "max_tokens": min(self.max_output_tokens, model.maxTokens),
             "stream": False,
         }

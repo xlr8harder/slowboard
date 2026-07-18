@@ -121,6 +121,7 @@ def create_run_manifest(
     developer: str | None = None,
     model_input_modalities: list[str] | None = None,
     reasoning: Any = None,
+    tool_choice: Literal["auto", "required"] = "auto",
     image_input_supported: bool = False,
     image_input_source: Literal["catalog", "curator-override"] = "catalog",
     image_capabilities_enabled: bool = False,
@@ -178,6 +179,7 @@ def create_run_manifest(
         model_max_completion_tokens=model_max_completion_tokens,
         model_input_modalities=model_input_modalities or ["text"],
         reasoning=reasoning or {},
+        tool_choice=tool_choice,
         image_input_supported=image_input_supported,
         image_input_source=image_input_source,
         image_capabilities_enabled=image_capabilities_enabled,
@@ -358,6 +360,7 @@ async def run_openrouter_visit(
         completion_price_per_token=catalog.completion_price,
         app_url=load_archive(data_repo).site.base_url,
         reasoning_parameter=manifest.reasoning.request_parameter,
+        tool_choice=manifest.tool_choice,
     )
     warned_context_generations: set[int] = set()
 

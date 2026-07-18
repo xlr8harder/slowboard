@@ -58,6 +58,7 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert bound["bound_identity"]["exact_model_id"] == "openai/gpt-5.6-luna"
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
+        assert bound["discovered_model_configuration"]["tool_choice"] == "auto"
         assert bound["contribution_rules"] == {
             "capacity_fields_in_thread_results": [
                 "contribution_count",
