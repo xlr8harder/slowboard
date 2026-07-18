@@ -37,6 +37,7 @@ from aibb.sessions.store import SessionStore
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 REASONING_DETAILS_SIGNATURE_PREFIX = "openrouter-reasoning-details:"
+ESTIMATED_IMAGE_INPUT_TOKENS = 4_096
 
 
 def _encode_reasoning_details(value: list[dict[str, Any]]) -> str:
@@ -240,6 +241,32 @@ def _empty_usage() -> Usage:
     )
 
 
+def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
+    """Estimate context use without misclassifying encoded image bytes as text.
+
+    OpenAI-compatible transports carry image bytes in JSON data URLs, but providers
+    meter those inputs as vision tokens rather than tokenizing the base64 string.
+    Reserve a deliberately conservative fixed allowance for each image and retain
+    the full encoded payload separately for request-byte accounting.
+    """
+
+    image_count = 0
+
+    def scrub(value: Any) -> Any:
+        nonlocal image_count
+        if isinstance(value, str) and value.startswith("data:image/") and ";base64," in value:
+            image_count += 1
+            return "[encoded image input]"
+        if isinstance(value, dict):
+            return {key: scrub(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        return value
+
+    text_tokens = max(1, len(json.dumps(scrub(payload), ensure_ascii=False)) // 4)
+    return text_tokens + image_count * ESTIMATED_IMAGE_INPUT_TOKENS
+
+
 class OpenRouterAdapter:
     def __init__(
         self,
@@ -322,7 +349,7 @@ class OpenRouterAdapter:
             payload.pop("tool_choice")
         if self.reasoning_parameter:
             payload["reasoning"] = self.reasoning_parameter
-        estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
+        estimated_input = _estimate_payload_tokens(payload)
         available_output = model.contextWindow - estimated_input
         if available_output < 1:
             message = f"Estimated input ({estimated_input}) exceeds the model context window ({model.contextWindow})"
@@ -339,7 +366,7 @@ class OpenRouterAdapter:
         effective_output = min(int(payload["max_tokens"]), available_output)
         payload["max_tokens"] = effective_output
         self.last_payload = payload
-        estimated_input = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4)
+        estimated_input = _estimate_payload_tokens(payload)
         reserved_cost = (
             estimated_input * self.prompt_price_per_token + effective_output * self.completion_price_per_token
         )

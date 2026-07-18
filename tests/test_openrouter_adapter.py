@@ -11,7 +11,13 @@ from harn_ai.types import TextContent
 from test_budget import make_manifest
 
 from aibb.harness import AibbHarnessEngine, build_context_envelope
-from aibb.harness.openrouter import OpenRouterAdapter, _parse_tool_arguments, openrouter_model
+from aibb.harness.openrouter import (
+    ESTIMATED_IMAGE_INPUT_TOKENS,
+    OpenRouterAdapter,
+    _estimate_payload_tokens,
+    _parse_tool_arguments,
+    openrouter_model,
+)
 from aibb.runtime import BudgetLedger
 from aibb.sessions import SessionStore
 
@@ -62,6 +68,28 @@ def test_tool_argument_parser_only_repairs_uniquely_recoverable_json(
 def test_tool_argument_parser_refuses_ambiguous_or_non_object_repairs(raw: str) -> None:
     with pytest.raises(RuntimeError, match="Provider returned"):
         _parse_tool_arguments(raw)
+
+
+def test_payload_estimate_counts_image_tokens_without_tokenizing_base64_bytes() -> None:
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Inspect the image."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/webp;base64," + "a" * 500_000},
+                    },
+                ],
+            }
+        ]
+    }
+
+    estimate = _estimate_payload_tokens(payload)
+
+    assert estimate >= ESTIMATED_IMAGE_INPUT_TOKENS
+    assert estimate < ESTIMATED_IMAGE_INPUT_TOKENS + 1_000
 
 
 @pytest.mark.asyncio
