@@ -460,6 +460,26 @@ def run_model(
             help="One model-visible, curator-authored note at the start of the visit; omitted for the ready TUI.",
         ),
     ] = None,
+    system_prompt_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--system-prompt-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Explicit UTF-8 system prompt copied into private run state for exact resumption.",
+        ),
+    ] = None,
+    system_prompt_label: Annotated[
+        str | None,
+        typer.Option("--system-prompt-label", help="Public name for the prompt-defined configuration."),
+    ] = None,
+    system_prompt_source_url: Annotated[
+        str | None,
+        typer.Option("--system-prompt-source-url", help="Optional public source link for the prompt configuration."),
+    ] = None,
     once: Annotated[bool, typer.Option("--once", help="Suspend after the first complete model turn.")] = False,
     resume_run: Annotated[str | None, typer.Option("--resume-run", help="Resume a run ID from state-root.")] = None,
     allow_repeat_reason: Annotated[
@@ -527,6 +547,8 @@ def run_model(
     if site.environment == "lab" and production:
         raise typer.BadParameter("--production cannot be used with a lab data repository")
     if resume_run:
+        if system_prompt_file or system_prompt_label or system_prompt_source_url:
+            raise typer.BadParameter("A resumed run uses its persisted system prompt; do not supply prompt options")
         run_dir = state_root / resume_run
         if not (run_dir / "manifest.json").exists():
             raise typer.BadParameter(f"Unknown run: {resume_run}")
@@ -547,6 +569,20 @@ def run_model(
     openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
 
     if not resume_run:
+        if (system_prompt_file is None) != (system_prompt_label is None):
+            raise typer.BadParameter("--system-prompt-file and --system-prompt-label must be supplied together")
+        if system_prompt_source_url and system_prompt_file is None:
+            raise typer.BadParameter("--system-prompt-source-url requires --system-prompt-file")
+        system_prompt_text = None
+        if system_prompt_file:
+            try:
+                system_prompt_text = system_prompt_file.read_bytes().decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise typer.BadParameter("--system-prompt-file must be valid UTF-8") from error
+            if not system_prompt_text.strip():
+                raise typer.BadParameter("--system-prompt-file must not be empty")
+            if "\x00" in system_prompt_text:
+                raise typer.BadParameter("--system-prompt-file must not contain NUL characters")
         if selected_provider == "openrouter":
             catalog = asyncio.run(fetch_openrouter_model(model))
             catalog_context_window = catalog.effective_context_length
@@ -631,6 +667,9 @@ def run_model(
             max_web_cost_usd=max_web_cost_usd,
             provider=selected_provider,
             endpoint=endpoint,
+            system_prompt_text=system_prompt_text,
+            system_prompt_label=system_prompt_label,
+            system_prompt_source_url=system_prompt_source_url,
         )
         run_id = manifest.run_id
         typer.echo(
@@ -652,6 +691,16 @@ def run_model(
                     "developer": developer,
                     "reasoning": reasoning_configuration.model_dump(mode="json"),
                     "tool_choice": tool_choice,
+                    "system_prompt": (
+                        {
+                            "label": manifest.system_prompt.label,
+                            "source_url": manifest.system_prompt.source_url,
+                            "chars": manifest.system_prompt.chars,
+                            "bytes": manifest.system_prompt.bytes,
+                        }
+                        if manifest.system_prompt
+                        else None
+                    ),
                     "publication_lane": site.environment,
                 },
                 sort_keys=True,

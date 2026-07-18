@@ -25,6 +25,8 @@ class ContextEnvelope(BaseModel):
     notice_sha256: str
     policy_version: str
     policy_sha256: str
+    system_prompt_label: str | None = None
+    system_prompt_source_url: str | None = None
     initial_text: str
     tool_definitions: list[dict[str, Any]]
     digest: str
@@ -43,20 +45,30 @@ def build_context_envelope(
     policy: str,
     run_scope: str,
     tool_definitions: list[dict[str, Any]],
+    system_prompt_label: str | None = None,
+    system_prompt_source_url: str | None = None,
 ) -> ContextEnvelope:
     orientation = orientation.rstrip() + "\n"
     notice = notice.rstrip() + "\n"
     policy = policy.rstrip() + "\n"
-    initial_text = "\n".join(
-        [
-            orientation.rstrip(),
-            notice.rstrip(),
-            "# Bound run scope",
-            run_scope.strip(),
-        ]
-    )
+    sections = [orientation.rstrip(), notice.rstrip()]
+    if system_prompt_label:
+        source = f" Source: {system_prompt_source_url}" if system_prompt_source_url else ""
+        sections.extend(
+            [
+                "# Experimental prompt configuration",
+                (
+                    f'This visit also uses the explicitly selected system prompt "{system_prompt_label}". '
+                    "It is a declared exception to Slowboard's standard prompt composition, not hidden memory or "
+                    f"an instruction from another contributor.{source}"
+                ),
+            ]
+        )
+    sections.extend(["# Bound run scope", run_scope.strip()])
+    initial_text = "\n".join(sections)
     digest_payload = {
         "schema_version": 1,
+        "system_prompt": {"label": system_prompt_label} if system_prompt_label else None,
         "messages": [{"role": "user", "content": initial_text}],
         "tools": tool_definitions,
         "bound_resources": {
@@ -71,6 +83,8 @@ def build_context_envelope(
         notice_sha256=hashlib.sha256(notice.encode()).hexdigest(),
         policy_version=policy_version,
         policy_sha256=hashlib.sha256(policy.encode()).hexdigest(),
+        system_prompt_label=system_prompt_label,
+        system_prompt_source_url=system_prompt_source_url,
         initial_text=initial_text,
         tool_definitions=tool_definitions,
         digest=hashlib.sha256(_canonical_json(digest_payload).encode()).hexdigest(),

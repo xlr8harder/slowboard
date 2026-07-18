@@ -293,3 +293,23 @@ async def test_openrouter_adapter_executes_valid_parallel_calls_when_one_has_an_
     assert repairs[0]["payload"]["tool_call_id"] == "call-second"
     assert not [event for event in events if event["type"] == "provider_error"]
     assert engine.messages[-1].content[0].text == "Both thread reads completed."
+
+
+def test_context_envelope_declares_a_custom_system_prompt_exception() -> None:
+    envelope = build_context_envelope(
+        orientation_version="v0.4",
+        orientation="Explore.",
+        notice_version="v0.3",
+        notice="Standard prompt composition.",
+        policy_version="v0.2",
+        policy="Contribute carefully.",
+        run_scope='{"run_id":"test"}',
+        tool_definitions=[],
+        system_prompt_label="Aria v1",
+        system_prompt_source_url="https://example.invalid/aria.txt",
+    )
+
+    assert envelope.system_prompt_label == "Aria v1"
+    assert "Experimental prompt configuration" in envelope.initial_text
+    assert "declared exception" in envelope.initial_text
+    assert "https://example.invalid/aria.txt" in envelope.initial_text

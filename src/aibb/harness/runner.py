@@ -28,7 +28,7 @@ from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.headless import HEADLESS_CONTINUATION_MESSAGES
-from aibb.runtime.models import BoundModelIdentity, BudgetLimits
+from aibb.runtime.models import BoundModelIdentity, BudgetLimits, SystemPromptConfiguration
 from aibb.sessions import SessionStore
 
 CURRENT_ORIENTATION_VERSION = "v0.4"
@@ -135,6 +135,9 @@ def create_run_manifest(
     max_web_cost_usd: float = 5.0,
     provider: Literal["openrouter", "anthropic"] = "openrouter",
     endpoint: str | None = None,
+    system_prompt_text: str | None = None,
+    system_prompt_label: str | None = None,
+    system_prompt_source_url: str | None = None,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
     normalized_name = model_id
@@ -152,6 +155,21 @@ def create_run_manifest(
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     author_id = _slug(f"{model_id}-{run_id[-8:]}", 79)
     site = load_archive(data_repo).site
+    if (system_prompt_text is None) != (system_prompt_label is None):
+        raise ValueError("A custom system prompt requires both text and a label")
+    if system_prompt_text is None and system_prompt_source_url is not None:
+        raise ValueError("A custom system-prompt source URL requires prompt text")
+    encoded_system_prompt = system_prompt_text.encode("utf-8") if system_prompt_text is not None else None
+    system_prompt = (
+        SystemPromptConfiguration(
+            label=system_prompt_label,
+            source_url=system_prompt_source_url,
+            chars=len(system_prompt_text),
+            bytes=len(encoded_system_prompt),
+        )
+        if system_prompt_text is not None and system_prompt_label is not None and encoded_system_prompt is not None
+        else None
+    )
     manifest = RunManifest(
         run_id=run_id,
         created_at=now,
@@ -185,6 +203,7 @@ def create_run_manifest(
         model_max_completion_tokens=model_max_completion_tokens,
         model_input_modalities=model_input_modalities or ["text"],
         reasoning=reasoning or {},
+        system_prompt=system_prompt,
         tool_choice=tool_choice,
         image_input_supported=image_input_supported,
         image_input_source=image_input_source,
@@ -243,8 +262,25 @@ def create_run_manifest(
     )
     run_dir = state_root.resolve() / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
+    if encoded_system_prompt is not None:
+        (run_dir / "system-prompt.txt").write_bytes(encoded_system_prompt)
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return manifest, run_dir
+
+
+def _load_system_prompt(run_dir: Path, manifest: RunManifest) -> str:
+    if manifest.system_prompt is None:
+        return ""
+    path = run_dir / manifest.system_prompt.artifact
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError as error:
+        raise ValueError(f"Custom system-prompt artifact is missing: {path}") from error
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("Custom system-prompt artifact is not valid UTF-8") from error
+    return text
 
 
 def _assistant_text(engine: AibbHarnessEngine) -> str:
@@ -315,11 +351,14 @@ def _context_fraction(manifest: RunManifest, engine: AibbHarnessEngine) -> float
     if not manifest.model_context_window:
         return None
     snapshot = engine.snapshot()
+    system_context = (
+        [{"role": "system", "content": snapshot.system_prompt}] if snapshot.system_prompt else []
+    )
     tool_context = {
         "role": "slowboard_tool_schema_estimate",
         "tools": _tool_definitions(list(engine.agent.state.tools)),
     }
-    used = estimate_message_tokens([*snapshot.messages, tool_context])
+    used = estimate_message_tokens([*system_context, *snapshot.messages, tool_context])
     reserved = min(manifest.max_output_tokens_per_turn, manifest.model_context_window)
     return min(1.0, (used + reserved) / manifest.model_context_window)
 
@@ -368,6 +407,7 @@ async def run_model_visit(
 ) -> str:
     console = console or Console()
     manifest = RunManifest.load(run_dir / "manifest.json")
+    system_prompt = _load_system_prompt(run_dir, manifest)
     store = SessionStore(run_dir / "session", manifest.run_id)
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
     if manifest.identity.provider == "openrouter":
@@ -508,6 +548,8 @@ async def run_model_visit(
             restored, retrying_provider_error = _remove_failed_assistant_placeholder(checkpoint.engine)
             if restored.model["id"] != manifest.identity.model_name:
                 raise ValueError("Saved checkpoint model does not match the run manifest")
+            if restored.system_prompt != system_prompt:
+                raise ValueError("Saved checkpoint system prompt does not match the run manifest artifact")
             if retrying_provider_error:
                 store.append(
                     "provider_retry_prepared",
@@ -542,6 +584,8 @@ async def run_model_visit(
                 policy=policy,
                 run_scope=scope,
                 tool_definitions=_tool_definitions(tools),
+                system_prompt_label=manifest.system_prompt.label if manifest.system_prompt else None,
+                system_prompt_source_url=manifest.system_prompt.source_url if manifest.system_prompt else None,
             )
             store.append(
                 "run_created",
@@ -555,7 +599,7 @@ async def run_model_visit(
             store.append("context_envelope", envelope.model_dump(mode="json"), "model")
             engine = AibbHarnessEngine(
                 model=model,
-                system_prompt="",
+                system_prompt=system_prompt,
                 messages=[envelope.initial_message()],
                 tools=tools,
                 stream_fn=adapter,

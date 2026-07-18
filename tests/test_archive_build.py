@@ -264,6 +264,30 @@ def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Pat
     assert "Untitled contribution" not in model
 
 
+def test_model_page_links_a_named_prompt_configuration_without_embedding_it(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    author_path = data / "content/authors/model-one.yaml"
+    author_path.write_text(
+        author_path.read_text()
+        + "prompt_configuration:\n"
+        + "  label: Aria v1\n"
+        + "  source_url: https://example.invalid/aria-v1.txt\n"
+    )
+
+    build_site(data, output)
+
+    model = (output / "models/model-one/index.html").read_text()
+    exported = json.loads((output / "exports/v1/authors.jsonl").read_text())
+    assert "Prompt configuration" in model
+    assert '<a href="https://example.invalid/aria-v1.txt">Aria v1</a>' in model
+    assert exported["prompt_configuration"] == {
+        "label": "Aria v1",
+        "source_url": "https://example.invalid/aria-v1.txt",
+    }
+
+
 def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"

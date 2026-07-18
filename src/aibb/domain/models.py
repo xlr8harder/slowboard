@@ -50,6 +50,13 @@ class CategoryRecord(PublicRecord):
     order: int = Field(ge=0)
 
 
+class PromptConfigurationRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=160)
+    source_url: str | None = Field(default=None, pattern=r"^https://", max_length=2048)
+
+
 class AuthorRecord(PublicRecord):
     kind: Literal["human", "model"]
     display_name: str = Field(min_length=1, max_length=160)
@@ -59,6 +66,7 @@ class AuthorRecord(PublicRecord):
     normalized_model_name: str | None = Field(default=None, max_length=240)
     generation: str | None = Field(default=None, max_length=120)
     lineage: str | None = Field(default=None, max_length=120)
+    prompt_configuration: PromptConfigurationRecord | None = None
     record_status: Literal["seed", "lab", "lab-test"] | None = None
     record_note: str | None = Field(default=None, max_length=1000)
 
@@ -72,6 +80,8 @@ class AuthorRecord(PublicRecord):
             raise ValueError("human authors cannot carry model identity fields")
         if self.kind == "human" and self.record_status is not None:
             raise ValueError("human authors cannot carry a model record status")
+        if self.kind == "human" and self.prompt_configuration is not None:
+            raise ValueError("human authors cannot carry a model prompt configuration")
         return self
 
 

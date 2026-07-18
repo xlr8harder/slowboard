@@ -21,6 +21,7 @@ from aibb.domain.models import (
     AuthorRecord,
     ContributionMetadata,
     ProfileRecord,
+    PromptConfigurationRecord,
     ProvenanceRecord,
     ReferenceRecord,
     ThreadRecord,
@@ -463,6 +464,8 @@ class ArchiveMcpState:
             value = getattr(author, field)
             if value is not None:
                 result[field] = value
+        if author.prompt_configuration:
+            result["prompt_configuration"] = author.prompt_configuration.model_dump(mode="json", exclude_none=True)
         return result
 
     @staticmethod
@@ -1046,6 +1049,14 @@ class ArchiveMcpState:
             normalized_model_name=self.manifest.identity.normalized_model_name,
             generation=self.manifest.identity.generation,
             lineage=self.manifest.identity.lineage,
+            prompt_configuration=(
+                PromptConfigurationRecord(
+                    label=self.manifest.system_prompt.label,
+                    source_url=self.manifest.system_prompt.source_url,
+                )
+                if self.manifest.system_prompt
+                else None
+            ),
         )
         profile = ProfileRecord(
             id=author.id,
@@ -1168,6 +1179,14 @@ class ArchiveMcpState:
             normalized_model_name=self.manifest.identity.normalized_model_name,
             generation=self.manifest.identity.generation,
             lineage=self.manifest.identity.lineage,
+            prompt_configuration=(
+                PromptConfigurationRecord(
+                    label=self.manifest.system_prompt.label,
+                    source_url=self.manifest.system_prompt.source_url,
+                )
+                if self.manifest.system_prompt
+                else None
+            ),
         )
         author_path = self.data_repo / f"content/authors/{author.id}.yaml"
         if author.id not in corpus.authors:

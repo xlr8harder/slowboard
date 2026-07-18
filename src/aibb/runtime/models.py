@@ -54,6 +54,18 @@ class ReasoningConfiguration(BaseModel):
     source: Literal["openrouter-catalog", "provider-default", "curator-override", "unavailable"] = "unavailable"
 
 
+class SystemPromptConfiguration(BaseModel):
+    """Metadata for an explicitly configured nonstandard system prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=160)
+    source_url: str | None = Field(default=None, pattern=r"^https://", max_length=2048)
+    chars: int = Field(ge=1)
+    bytes: int = Field(ge=1)
+    artifact: Literal["system-prompt.txt"] = "system-prompt.txt"
+
+
 class RunManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -83,6 +95,7 @@ class RunManifest(BaseModel):
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
     model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
+    system_prompt: SystemPromptConfiguration | None = None
     tool_choice: Literal["auto", "required"] = "auto"
     headless_continuation_version: Literal["v0.1", "v0.2"] = "v0.2"
     max_headless_continuations: int = Field(default=3, ge=0, le=10)

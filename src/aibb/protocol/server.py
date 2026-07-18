@@ -843,6 +843,12 @@ def create_server(
                 },
                 "remaining_budgets": state.model_visible_remaining_budgets(),
             }
+            if state.manifest.system_prompt:
+                payload["system_prompt_configuration"] = {
+                    "label": state.manifest.system_prompt.label,
+                    "source_url": state.manifest.system_prompt.source_url,
+                    "status": "explicit curator-selected system prompt; exception to the standard Slowboard prompt",
+                }
             if not (state.manifest.image_capabilities_enabled and state.manifest.image_input_supported):
                 payload.pop("image_capabilities")
             elif "generate_image" in state.manifest.capability_budgets:

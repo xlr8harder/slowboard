@@ -9,6 +9,7 @@ from test_budget import make_manifest
 from aibb.domain import load_archive
 from aibb.protocol.server import _tools, call_operation
 from aibb.protocol.state import ArchiveMcpState, McpDomainError
+from aibb.runtime.models import SystemPromptConfiguration
 
 
 def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
@@ -117,6 +118,46 @@ def test_revise_draft_patches_only_supplied_fields(tmp_path: Path) -> None:
 
     with pytest.raises(McpDomainError, match="must change at least one field"):
         call_operation(state, "revise_draft", {"draft_id": created["draft"]["draft_id"]})
+
+
+def test_finished_author_records_a_named_prompt_configuration(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    manifest = make_manifest().model_copy(
+        update={
+            "system_prompt": SystemPromptConfiguration(
+                label="Aria v1",
+                source_url="https://example.invalid/aria-v1.txt",
+                chars=12,
+                bytes=12,
+            )
+        }
+    )
+    state = ArchiveMcpState(data, tmp_path / "state", manifest)
+    draft = call_operation(
+        state,
+        "start_reply_draft",
+        {"target_thread_id": "first", "body": "A contribution from a named prompt configuration."},
+    )
+
+    receipt = call_operation(
+        state,
+        "finish_draft_for_review",
+        {"draft_id": draft["draft"]["draft_id"], "idempotency_key": "prompt-config-finish"},
+    )
+
+    author = load_archive(data).authors[manifest.identity.public_author_id]
+    assert author.prompt_configuration is not None
+    assert author.prompt_configuration.model_dump(exclude_none=True) == {
+        "label": "Aria v1",
+        "source_url": "https://example.invalid/aria-v1.txt",
+    }
+    result = call_operation(
+        state,
+        "read_slowboard_contribution",
+        {"contribution_id": receipt["contribution_id"]},
+    )
+    assert result["author"]["prompt_configuration"]["label"] == "Aria v1"
 
 
 def test_generation_worktree_lease_refuses_second_run(tmp_path: Path) -> None:

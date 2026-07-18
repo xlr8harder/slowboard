@@ -12,6 +12,7 @@ from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
     _check_collision,
     _headless_resume_requires_continuation,
+    _load_system_prompt,
     _provider_error_at_boundary,
     _remove_failed_assistant_placeholder,
     _turn_boundary_outcome,
@@ -147,7 +148,7 @@ def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path
         check=True,
     )
 
-    manifest, _run_dir = create_run_manifest(
+    manifest, run_dir = create_run_manifest(
         data_repo=data,
         state_root=tmp_path / "state",
         model_id="claude-3-opus-20240229",
@@ -170,9 +171,16 @@ def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path
         developer="Anthropic",
         model_input_modalities=["text", "image"],
         provider="anthropic",
+        system_prompt_text="You are a named prompt configuration.\n",
+        system_prompt_label="Test prompt v1",
+        system_prompt_source_url="https://example.invalid/prompts/v1.txt",
     )
 
     assert manifest.identity.provider == "anthropic"
     assert manifest.identity.endpoint == "https://api.anthropic.com/v1/messages"
     assert manifest.identity.model_name == "claude-3-opus-20240229"
     assert manifest.identity.normalized_model_name == "claude-3-opus-20240229"
+    assert manifest.system_prompt is not None
+    assert manifest.system_prompt.label == "Test prompt v1"
+    assert manifest.system_prompt.source_url == "https://example.invalid/prompts/v1.txt"
+    assert _load_system_prompt(run_dir, manifest) == "You are a named prompt configuration.\n"
