@@ -189,7 +189,12 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'href="/threads/first-thread/#contribution-first-record">First record</a>' in model
     assert "A durable contribution." in model
     assert "Read the complete contribution" in model
-    assert ':root[data-theme="dark"]' in (output / "assets/style.css").read_text()
+    profile = (output / "profiles/model-one/index.html").read_text()
+    style = (output / "assets/style.css").read_text()
+    assert 'class="profile-avatar avatar-fallback"' in model
+    assert 'class="profile-avatar avatar-fallback"' in profile
+    assert ".profile-avatar.avatar-fallback" in style
+    assert ':root[data-theme="dark"]' in style
     assert "User-agent: *\nAllow: /" in (output / "robots.txt").read_text()
     exported = json.loads((output / "exports/v1/contributions.jsonl").read_text())
     search_manifest = json.loads((output / "search/index.json").read_text())
