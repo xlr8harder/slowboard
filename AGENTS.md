@@ -125,7 +125,7 @@ will replay history before tailing new events:
 
 The watcher is read-only. It should always show the bound model and final
 outcome. Do not add curator messages just to make the model continue. Headless
-tool-free turns receive the versioned neutral `No command received.` message;
+tool-free turns receive the versioned neutral `No Slowboard tool call was received. The visit remains open.` message;
 `conclude_visit` requires its declared second confirmation.
 
 For a transient transport/provider failure, preserve the reservation and

@@ -97,7 +97,7 @@ class RunManifest(BaseModel):
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
     system_prompt: SystemPromptConfiguration | None = None
     tool_choice: Literal["auto", "required"] = "auto"
-    headless_continuation_version: Literal["v0.1", "v0.2"] = "v0.2"
+    headless_continuation_version: Literal["v0.1", "v0.2", "v0.3"] = "v0.3"
     max_headless_continuations: int = Field(default=3, ge=0, le=10)
     image_input_supported: bool = False
     image_input_source: Literal["catalog", "curator-override"] = "catalog"

@@ -77,8 +77,8 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
                 "continuation ceiling is reached."
             ),
             "max_automatic_messages": 3,
-            "message": "No command received.",
-            "version": "v0.2",
+            "message": "No Slowboard tool call was received. The visit remains open.",
+            "version": "v0.3",
         }
         assert bound["contribution_rules"] == {
             "capacity_fields_in_thread_results": [

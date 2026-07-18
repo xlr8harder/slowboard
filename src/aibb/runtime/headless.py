@@ -9,4 +9,5 @@ HEADLESS_CONTINUATION_MESSAGES = {
         "Do not respond with a prose status summary."
     ),
     "v0.2": "No command received.",
+    "v0.3": "No Slowboard tool call was received. The visit remains open.",
 }
