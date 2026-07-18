@@ -12,7 +12,14 @@ from aibb.harness import watch as watch_module
 from aibb.harness.watch import RunEventRenderer, latest_run_directory, run_directories, watch_state_root
 
 
-def _write_completed_run(state_root: Path, run_id: str, created_at: datetime, display_name: str) -> Path:
+def _write_run(
+    state_root: Path,
+    run_id: str,
+    created_at: datetime,
+    display_name: str,
+    *,
+    completed: bool = True,
+) -> Path:
     run_dir = state_root / run_id
     events_dir = run_dir / "session"
     events_dir.mkdir(parents=True)
@@ -24,7 +31,7 @@ def _write_completed_run(state_root: Path, run_id: str, created_at: datetime, di
         }
     )
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    events = [
+    events: list[dict[str, object]] = [
         {
             "type": "run_created",
             "run_id": run_id,
@@ -35,13 +42,18 @@ def _write_completed_run(state_root: Path, run_id: str, created_at: datetime, di
                 }
             },
         },
-        {"type": "run_completed", "run_id": run_id, "payload": {"reason": "model_concluded_visit"}},
     ]
+    if completed:
+        events.append({"type": "run_completed", "run_id": run_id, "payload": {"reason": "model_concluded_visit"}})
     (events_dir / "events.jsonl").write_text(
         "".join(json.dumps(event) + "\n" for event in events),
         encoding="utf-8",
     )
     return run_dir
+
+
+def _write_completed_run(state_root: Path, run_id: str, created_at: datetime, display_name: str) -> Path:
+    return _write_run(state_root, run_id, created_at, display_name)
 
 
 def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
@@ -187,3 +199,26 @@ def test_standing_watcher_can_start_before_first_run(tmp_path: Path, monkeypatch
     assert "Waiting for a new Slowboard run" in rendered
     assert "run-watch-first" in rendered
     assert "First" in rendered
+
+
+def test_standing_watcher_switches_when_previous_stream_has_no_terminal_event(tmp_path: Path, monkeypatch) -> None:
+    now = datetime.now(UTC)
+    _write_run(tmp_path, "run-watch-unterminated", now, "Unterminated", completed=False)
+    created_next = False
+
+    def create_next_on_wait(_: float) -> None:
+        nonlocal created_next
+        if not created_next:
+            created_next = True
+            _write_completed_run(tmp_path, "run-watch-after-gap", now + timedelta(seconds=1), "After Gap")
+
+    monkeypatch.setattr(watch_module.time, "sleep", create_next_on_wait)
+    output = StringIO()
+
+    watch_state_root(tmp_path, poll_seconds=0.001, output=output, max_runs=2)
+
+    rendered = output.getvalue()
+    assert "run-watch-unterminated" in rendered
+    assert "Unterminated" in rendered
+    assert "run-watch-after-gap" in rendered
+    assert "After Gap" in rendered

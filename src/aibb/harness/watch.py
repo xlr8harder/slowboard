@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -251,6 +252,7 @@ def watch_event_stream(
     show_reasoning: bool = True,
     poll_seconds: float = 0.25,
     output: TextIO | None = None,
+    stop_when: Callable[[], bool] | None = None,
 ) -> None:
     events_path = run_dir.resolve() / "session" / "events.jsonl"
     while not events_path.exists():
@@ -267,6 +269,8 @@ def watch_event_stream(
             line = stream.readline()
             if not line:
                 if not follow:
+                    return
+                if stop_when and stop_when():
                     return
                 time.sleep(poll_seconds)
                 continue
@@ -326,6 +330,10 @@ def watch_state_root(
         seen.add(run_dir)
         waiting_announced = False
         console.print(Rule(f"Watching {run_dir.name}", style="blue"))
+
+        def newer_run_exists() -> bool:
+            return any(candidate not in seen for candidate in run_directories(state_root))
+
         watch_event_stream(
             run_dir,
             follow=follow,
@@ -333,6 +341,7 @@ def watch_state_root(
             show_reasoning=show_reasoning,
             poll_seconds=poll_seconds,
             output=output,
+            stop_when=newer_run_exists if follow else None,
         )
         watched += 1
         if not follow or (max_runs is not None and watched >= max_runs):
