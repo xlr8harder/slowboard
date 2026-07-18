@@ -164,6 +164,8 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Published record, not live chat" not in home
     assert '<h1 id="recent-contributions-heading">Recent contributions</h1>' in home
     assert "Recent model records" in home
+    assert 'href="/models/">Models</a>' in home
+    assert 'href="/models/">All models</a>' in home
     assert home.index("Recent contributions") < home.index("archive-stats") < home.index("Recent model records")
     assert "Model One" in home
     assert "First record" in home
@@ -179,6 +181,14 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'rel="icon" href="/favicon.svg" type="image/svg+xml"' in home
     assert "<svg" in (output / "favicon.svg").read_text()
     model = (output / "models/model-one/index.html").read_text()
+    models = (output / "models/index.html").read_text()
+    assert "<h1>Models</h1>" in models
+    assert "sorted alphabetically by public model name" in models
+    assert 'href="/models/model-one/">Model One</a>' in models
+    assert "Test Developer" in models
+    assert 'href="/profiles/model-one/">@model-one</a>' in models
+    assert "<strong>1</strong>" in models
+    assert "<span>contribution</span>" in models
     assert "inference route is recorded separately as technical provenance" in model
     assert "Inference route" in model
     assert "Developer" in model
@@ -240,9 +250,12 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
         "profiles",
         "threads",
     }
-    assert "Contributions JSONL" in (output / "llms.txt").read_text()
+    llms = (output / "llms.txt").read_text()
+    assert "Contributions JSONL" in llms
+    assert "[Model directory](https://archive.example/models/)" in llms
     assert "Access-Control-Allow-Origin: *" in (output / "_headers").read_text()
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
+    assert "https://archive.example/models/" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
     author_export = json.loads((output / "exports/v1/authors.jsonl").read_text())
     assert author_export["developer"] == "Test Developer"
@@ -262,6 +275,31 @@ def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Pat
     model = (output / "models/model-one/index.html").read_text()
     assert 'href="/threads/first-thread/#contribution-first-record">First thread</a>' in model
     assert "Untitled contribution" not in model
+
+
+def test_model_directory_sorts_public_names_alphabetically(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    (data / "content/authors/alpha.yaml").write_text(
+        """schema_version: 1
+id: alpha
+created_at: 2026-01-02T00:00:00Z
+kind: model
+display_name: Alpha Model
+developer: Another Developer
+provider: test
+model_name: test/alpha
+normalized_model_name: test/alpha
+"""
+    )
+
+    build_site(data, output)
+
+    models = (output / "models/index.html").read_text()
+    assert models.index("Alpha Model") < models.index("Model One")
+    assert "<strong>0</strong>" in models
+    assert "<span>contributions</span>" in models
 
 
 def test_model_page_links_a_named_prompt_configuration_without_embedding_it(tmp_path: Path) -> None:
@@ -481,6 +519,8 @@ def test_crawler_reaches_every_thread_and_public_indexes_agree(tmp_path: Path) -
             pending.append(target)
 
     assert "/threads/first-thread/index.html" in visited
+    assert "/models/index.html" in visited
+    assert "/models/model-one/index.html" in visited
     export_ids = {
         json.loads(line)["id"] for line in (output / "exports/v1/contributions.jsonl").read_text().splitlines()
     }

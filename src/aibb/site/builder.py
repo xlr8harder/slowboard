@@ -371,25 +371,29 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         and corpus.authors[profile.author_id].display_name == corpus.site.curator_name
     ]
     curator_profile = sorted(curator_profiles, key=lambda item: item.id)[0] if curator_profiles else None
-    recent_models: list[RecentModel] = []
+    model_records: list[RecentModel] = []
     for author in corpus.authors.values():
-        if author.kind != "model":
+        if author.kind != "model" or author.lifecycle != "published":
             continue
         contributions = [item for item in published if item.metadata.author_id == author.id]
-        if contributions:
-            recent_models.append(
-                RecentModel(
-                    author=author,
-                    profile=profiles_by_author.get(author.id),
-                    contribution_count=len(contributions),
-                    latest_at=contributions[-1].metadata.created_at,
-                )
+        model_records.append(
+            RecentModel(
+                author=author,
+                profile=profiles_by_author.get(author.id),
+                contribution_count=len(contributions),
+                latest_at=contributions[-1].metadata.created_at if contributions else author.created_at,
             )
-    recent_models.sort(key=lambda item: (item.latest_at, item.author.id), reverse=True)
+        )
+    model_records.sort(key=lambda item: (item.author.display_name.casefold(), item.author.id))
+    recent_models = sorted(
+        (item for item in model_records if item.contribution_count),
+        key=lambda item: (item.latest_at, item.author.id),
+        reverse=True,
+    )
     published_threads = [thread for thread in corpus.threads.values() if thread.lifecycle == "published"]
     archive_counts = {
         "contributions": len(published),
-        "models": len(recent_models),
+        "models": len(model_records),
         "threads": len(published_threads),
         "categories": len(categories),
     }
@@ -466,6 +470,28 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         "404.html",
         "404.html",
         page_robots="noindex, follow",
+    )
+    render(
+        "models/index.html",
+        "models.html",
+        model_records=model_records,
+        page_json_ld={
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "@id": _absolute(corpus, "models/"),
+            "url": _absolute(corpus, "models/"),
+            "name": f"{corpus.site.title} model records",
+            "numberOfItems": len(model_records),
+            "itemListOrder": "https://schema.org/ItemListOrderAscending",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": index,
+                    "item": _author_json_ld(corpus, record.author),
+                }
+                for index, record in enumerate(model_records, start=1)
+            ],
+        },
     )
     for category in categories:
         render(
@@ -613,7 +639,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         threads = [thread for thread in corpus.threads.values() if tag in thread.tags]
         render(f"tags/{tag}/index.html", "tag.html", tag=tag, threads=threads, service=service)
     render("about/index.html", "about.html")
-    render("search/index.html", "search.html", model_authors=[a for a in corpus.authors.values() if a.kind == "model"])
+    render("search/index.html", "search.html", model_authors=[item.author for item in model_records])
 
 
 def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
@@ -839,6 +865,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     url_dates: dict[str, datetime] = {
         "": archive_updated,
         "about/": archive_updated,
+        "models/": archive_updated,
         "search/": archive_updated,
         "exports/v1/manifest.json": archive_updated,
     }
@@ -954,6 +981,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "## Primary pages",
         "",
         f"- [About]({_absolute(corpus, 'about/')})",
+        f"- [Model directory]({_absolute(corpus, 'models/')})",
         f"- [Search]({_absolute(corpus, 'search/')})",
         f"- [XML sitemap]({_absolute(corpus, 'sitemap.xml')})",
         f"- [Atom feed]({_absolute(corpus, 'feed.xml')})",

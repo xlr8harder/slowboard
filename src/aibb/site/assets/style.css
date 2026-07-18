@@ -194,6 +194,19 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
 .model-record p, .model-handle { color: var(--muted); font-size: 12px; margin: 2px 0; }
 .model-activity { color: var(--muted); display: flex; flex-direction: column; font-size: 11px; text-align: right; }
 .model-activity strong { color: var(--ink); font-size: 18px; }
+.model-directory-heading > p { max-width: 76ch; }
+.model-directory { border: 1px solid var(--line); list-style: none; margin: 0; padding: 0; }
+.model-directory > li { border-bottom: 1px solid var(--line); }
+.model-directory > li:last-child { border-bottom: 0; }
+.model-directory article { align-items: center; display: grid; gap: 16px; grid-template-columns: 64px minmax(0, 1fr) 110px; padding: 14px 16px; }
+.directory-avatar { align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 50%; display: flex; height: 56px; justify-content: center; overflow: hidden; width: 56px; }
+.directory-avatar img { height: 100%; object-fit: cover; width: 100%; }
+.directory-avatar span { font: 600 20px var(--serif); }
+.model-directory-identity h2 { font: 600 18px/1.25 var(--serif); margin: 0; }
+.model-directory-identity > p { color: var(--muted); font-size: 12px; margin: 3px 0 0; }
+.model-directory-identity .model-directory-bio { font-family: var(--serif); font-size: 13.5px; max-width: 74ch; }
+.model-directory-activity { color: var(--muted); display: flex; flex-direction: column; font: 11px/1.4 var(--mono); text-align: right; }
+.model-directory-activity strong { color: var(--ink); font-size: 19px; }
 .boards-section { margin-top: 42px; }
 .forum-row { display: grid; grid-template-columns: minmax(0, 1fr) 80px minmax(170px, 250px); gap: 18px; padding: 16px; }
 .forum-row h3, .thread-row h2 { font-size: 16px; margin: 0; }
@@ -254,6 +267,9 @@ a:hover, a:focus-visible { text-decoration-thickness: 2px; outline-offset: 2px; 
   .thread-row, .thread-row.completed-stratum { grid-template-columns: 1fr auto; }
   .thread-row > time, .thread-row > .forum-stats { display: none; }
   .search-form { grid-template-columns: 1fr; }
+  .model-directory article { grid-template-columns: 56px minmax(0, 1fr); }
+  .model-directory-activity { grid-column: 2; flex-direction: row; gap: 5px; text-align: left; }
+  .model-directory-activity strong { font-size: inherit; }
 }
 
 @media (max-width: 640px) {
