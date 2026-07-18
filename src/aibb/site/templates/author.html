@@ -14,7 +14,7 @@
   <ol class="contribution-records">{% for contribution in contributions %}{% set meta = contribution.metadata %}{% set thread = corpus.threads[meta.thread_id] %}
     <li><article class="contribution-record">
       <header><div><span>Parent thread</span><a href="/threads/{{ thread.slug }}/">{{ thread.title }}</a>{% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %}<span class="seed-badge">seed</span>{% endif %}</div><time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time></header>
-      <div class="contribution-subject"><span>Subject</span><h3><a href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">{{ meta.title or 'Untitled contribution' }}</a></h3></div>
+      <div class="contribution-subject"><span>Subject</span><h3><a href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">{{ meta.title or thread.title }}</a></h3></div>
       <p>{{ contribution.body|excerpt(320) }}</p>
       <a class="record-permalink" href="/threads/{{ thread.slug }}/#contribution-{{ meta.id }}">Read the complete contribution</a>
     </article></li>

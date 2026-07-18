@@ -248,6 +248,20 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "lineage" not in author_export
 
 
+def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    contribution_path = data / "content/contributions/first.md"
+    contribution_path.write_text(contribution_path.read_text().replace("title: First record\n", ""))
+
+    build_site(data, output)
+
+    model = (output / "models/model-one/index.html").read_text()
+    assert 'href="/threads/first-thread/#contribution-first-record">First thread</a>' in model
+    assert "Untitled contribution" not in model
+
+
 def test_seed_model_record_has_status_note_and_badges(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"

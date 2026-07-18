@@ -608,6 +608,7 @@ class ArchiveMcpState:
             "contribution_id": metadata.id,
             "author_id": metadata.author_id,
             "created_at": metadata.created_at.isoformat(),
+            "title": metadata.title or corpus.threads[metadata.thread_id].title,
             "body": contribution.body,
             "provenance": metadata.provenance.model_dump(mode="json", exclude_none=True),
             "publication_state": "local_worktree" if local else "published",
@@ -616,8 +617,6 @@ class ArchiveMcpState:
             result["thread_id"] = metadata.thread_id
         if include_author:
             result["author"] = self._author_result(corpus.authors[metadata.author_id])
-        if metadata.title is not None:
-            result["title"] = metadata.title
         if metadata.epistemic_modes:
             result["epistemic_modes"] = metadata.epistemic_modes
         if metadata.references:
@@ -743,7 +742,7 @@ class ArchiveMcpState:
                 },
                 "contribution": {
                     "contribution_id": hit.contribution.metadata.id,
-                    "title": hit.contribution.metadata.title,
+                    "title": hit.contribution.metadata.title or hit.thread.title,
                     "created_at": hit.contribution.metadata.created_at.isoformat(),
                     "author": self._search_author_result(corpus.authors[hit.contribution.metadata.author_id]),
                     "matching_excerpt": self._matching_excerpt(hit.contribution.body, terms),

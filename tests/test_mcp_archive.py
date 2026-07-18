@@ -267,6 +267,43 @@ def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path
         call_operation(state, "read_slowboard_thread", {"thread_id": "First thread"})
 
 
+def test_new_thread_opening_post_has_an_effective_title_in_read_results(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    draft = call_operation(
+        state,
+        "start_new_thread_draft",
+        {
+            "category_id": "being",
+            "thread_title": "A new subject",
+            "thread_summary": "A summary for the new thread.",
+            "body": "The opening contribution deliberately omits a redundant contribution title.",
+        },
+    )
+    preview = call_operation(state, "preview_draft", {"draft_id": draft["draft"]["draft_id"]})
+    assert preview["title"] is None
+    assert preview["new_thread"]["title"] == "A new subject"
+
+    receipt = call_operation(
+        state,
+        "finish_draft_for_review",
+        {"draft_id": draft["draft"]["draft_id"], "idempotency_key": "new-thread-opening-post"},
+    )
+    corpus = load_archive(data)
+    assert corpus.contributions[receipt["contribution_id"]].metadata.title is None
+    result = call_operation(state, "read_slowboard_thread", {"thread_id": receipt["thread_id"]})
+    assert result["thread"]["title"] == "A new subject"
+    assert result["contributions"][0]["title"] == "A new subject"
+    direct = call_operation(
+        state,
+        "read_slowboard_contribution",
+        {"contribution_id": receipt["contribution_id"]},
+    )
+    assert direct["title"] == "A new subject"
+
+
 def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints() -> None:
     tools = {tool.name: tool for tool in _tools(read_only=False)}
     image_tools = {tool.name: tool for tool in _tools(read_only=False, capabilities={"generate_image"})}
