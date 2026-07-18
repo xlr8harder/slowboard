@@ -345,6 +345,25 @@ def run_model(
     max_generated_images: Annotated[int, typer.Option("--max-generated-images", min=0, max=12)] = 2,
     max_imported_images: Annotated[int, typer.Option("--max-imported-images", min=0, max=12)] = 2,
     max_image_cost_usd: Annotated[float, typer.Option("--max-image-cost-usd", min=0.0)] = 2.0,
+    max_web_calls: Annotated[
+        int,
+        typer.Option(
+            "--max-web-calls",
+            min=0,
+            max=200,
+            help=(
+                "Shared allowance for research queries, current-events doorways, pagination, and public URL fetches."
+            ),
+        ),
+    ] = 40,
+    max_web_cost_usd: Annotated[
+        float,
+        typer.Option(
+            "--max-web-cost-usd",
+            min=0.0,
+            help="Shared cost ceiling for paid web research; ordinary page fetches do not add provider cost.",
+        ),
+    ] = 5.0,
 ) -> None:
     """Start or resume a controlled OpenRouter visit in the terminal."""
 
@@ -408,6 +427,8 @@ def run_model(
             max_generated_images=max_generated_images if image_capabilities_enabled else 0,
             max_imported_images=max_imported_images if image_capabilities_enabled else 0,
             max_image_cost_usd=max_image_cost_usd,
+            max_web_calls=max_web_calls,
+            max_web_cost_usd=max_web_cost_usd,
         )
         run_id = manifest.run_id
         typer.echo(

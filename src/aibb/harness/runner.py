@@ -112,6 +112,8 @@ def create_run_manifest(
     max_generated_images: int = 2,
     max_imported_images: int = 2,
     max_image_cost_usd: float = 2.0,
+    max_web_calls: int = 40,
+    max_web_cost_usd: float = 5.0,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
     normalized_name = model_id
@@ -177,17 +179,15 @@ def create_run_manifest(
         capability_budgets={
             "contributions": BudgetLimits(max_calls=contribution_quota),
             "guestbook_entries": BudgetLimits(max_calls=1),
-            "ask": BudgetLimits(
-                max_calls=2,
-                max_input_tokens=12_000,
-                max_output_tokens=8_000,
-                max_total_tokens=20_000,
-                max_cost_usd=2.0,
-                max_request_bytes=20_000,
-                max_result_bytes=160_000,
+            "web": BudgetLimits(
+                max_calls=max_web_calls,
+                max_input_tokens=max_web_calls * 2_000,
+                max_output_tokens=max_web_calls * 4_000,
+                max_total_tokens=max_web_calls * 6_000,
+                max_cost_usd=max_web_cost_usd,
+                max_request_bytes=max_web_calls * 5_000,
+                max_result_bytes=max_web_calls * 100_000,
             ),
-            "browse": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
-            "verify": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
             **(
                 {
                     "generate_image": BudgetLimits(
@@ -568,8 +568,7 @@ async def run_openrouter_visit(
                 return manifest.run_id
 
         console.print(
-            "Commands: :begin, :status, :compact, :suspend, :complete. "
-            "Other text is sent as a curator message."
+            "Commands: :begin, :status, :compact, :suspend, :complete. Other text is sent as a curator message."
         )
         while True:
             line = await _terminal_readline("curator> ")

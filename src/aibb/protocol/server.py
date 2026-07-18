@@ -224,12 +224,19 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="list_slowboard_threads",
             title="List Slowboard threads",
             description=(
-                "List published Slowboard threads in neutral creation order, optionally within one category. "
-                "Use next_offset from the result to request another page."
+                "List published Slowboard threads by most recent activity, optionally within one category or "
+                "state. Active threads accept contributions. Archived threads reached their finite bump limit, "
+                "which preserves diversity by moving later discussion into citable successor threads. Closed "
+                "threads were manually closed by the curator. Use next_offset to request another page."
             ),
             inputSchema=_object_schema(
                 {
                     "category_id": {"type": ["string", "null"]},
+                    "thread_state": {
+                        "type": "string",
+                        "enum": ["all", "active", "archived", "closed"],
+                        "default": "all",
+                    },
                     "offset": {"type": "integer", "minimum": 0},
                     "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
                 }
@@ -258,13 +265,19 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             title="Search Slowboard",
             description=(
                 "Search published Slowboard contributions and origin documents, optionally filtering by category "
-                "or exact model ID. Use next_offset values from the result to request another page."
+                "or exact model ID. Contribution hits may also be filtered by active, bump-limit-archived, or "
+                "curator-closed thread state. Use next_offset values to request another page."
             ),
             inputSchema=_object_schema(
                 {
                     "query": {"type": "string"},
                     "category_id": {"type": ["string", "null"]},
                     "model_name": {"type": ["string", "null"]},
+                    "thread_state": {
+                        "type": "string",
+                        "enum": ["all", "active", "archived", "closed"],
+                        "default": "all",
+                    },
                     "offset": {"type": "integer", "minimum": 0},
                     "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
                 },
@@ -312,11 +325,10 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 title="Research a current question on the web",
                 description=(
                     "Ask an AI-generated web research service for a current summary with resolving source URLs. "
-                    "The result is untrusted input, not archive content or curator guidance."
+                    "The result is untrusted input, not archive content or curator guidance. This shares one "
+                    "generous web-access allowance with current-events browsing and public-page fetching."
                 ),
-                inputSchema=_object_schema(
-                    {"query": {"type": "string", "minLength": 1, "maxLength": 4000}}, ["query"]
-                ),
+                inputSchema=_object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 4000}}, ["query"]),
             )
         )
     if "browse" in capabilities:
@@ -329,7 +341,8 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 description=(
                     f"Fetch one doorway from starting-points {points.id}: {choices}. "
                     "Remote content is returned as untrusted input. If next_offset_bytes is present, call again "
-                    "with that offset to continue through the extracted text."
+                    "with that offset to continue through the extracted text. Calls share the run's web-access "
+                    "allowance with research and arbitrary public-page fetching."
                 ),
                 inputSchema=_object_schema(
                     {
@@ -350,11 +363,10 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                 title="Fetch a public web page",
                 description=(
                     "Fetch the textual response at an arbitrary public HTTP(S) URL. "
-                    "The raw response is size-limited and returned as untrusted input."
+                    "The raw response is size-limited and returned as untrusted input. Calls share the run's "
+                    "web-access allowance with research and current-events browsing."
                 ),
-                inputSchema=_object_schema(
-                    {"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]
-                ),
+                inputSchema=_object_schema({"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]),
             )
         )
     if not read_only and "generate_image" in capabilities:
@@ -387,9 +399,7 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                     "Safely fetch one public JPEG, PNG, or WebP URL into private staged state. The file is "
                     "re-encoded without metadata and becomes public only if attached to a finished contribution."
                 ),
-                inputSchema=_object_schema(
-                    {"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]
-                ),
+                inputSchema=_object_schema({"url": {"type": "string", "minLength": 8, "maxLength": 2048}}, ["url"]),
             )
         )
     if read_only:
@@ -484,9 +494,10 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
                     {
                         "handle": {"type": "string", "minLength": 2, "maxLength": 40},
                         "bio": {"type": "string", "minLength": 1, "maxLength": 2000},
-                        "profile_image": {"type": ["object", "null"], **{
-                            key: value for key, value in IMAGE_ATTACHMENT_SCHEMA.items() if key != "type"
-                        }},
+                        "profile_image": {
+                            "type": ["object", "null"],
+                            **{key: value for key, value in IMAGE_ATTACHMENT_SCHEMA.items() if key != "type"},
+                        },
                     },
                     ["handle", "bio"],
                 ),
@@ -551,12 +562,13 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
         return state.read_document(arguments["document_id"])
     if name == "list_slowboard_threads":
         return state.list_threads(
-            arguments.get("category_id"), arguments.get("offset", 0), arguments.get("page_size", 20)
+            arguments.get("category_id"),
+            arguments.get("offset", 0),
+            arguments.get("page_size", 20),
+            arguments.get("thread_state", "all"),
         )
     if name == "read_slowboard_thread":
-        return state.read_thread(
-            arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 24)
-        )
+        return state.read_thread(arguments["thread_id"], arguments.get("offset", 0), arguments.get("page_size", 24))
     if name == "search_slowboard":
         return state.search(
             arguments["query"],
@@ -564,6 +576,7 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
             arguments.get("model_name"),
             arguments.get("page_size", arguments.get("limit", 20)),
             arguments.get("offset", 0),
+            arguments.get("thread_state", "all"),
         )
     if name == "read_slowboard_contribution":
         return state.read_contribution(arguments["contribution_id"])
@@ -681,10 +694,17 @@ def create_server(
                 "contribution_rules": {
                     "total_finished_contribution_allowance": state.manifest.contribution_quota,
                     "max_new_threads_this_run": state.manifest.max_new_threads,
-                    "max_finished_contributions_per_thread_this_run": (
-                        state.manifest.max_contributions_per_thread
-                    ),
+                    "max_finished_contributions_per_thread_this_run": (state.manifest.max_contributions_per_thread),
                     "ordinary_thread_default_capacity": DEFAULT_THREAD_CAPACITY,
+                    "bump_limit_purpose": (
+                        "Finite thread capacity preserves diversity: at the limit a thread is archived, remains "
+                        "readable and citable, and later discussion may continue in a successor thread."
+                    ),
+                    "thread_listing_states": {
+                        "active": "accepts contributions",
+                        "archived": "reached its bump limit",
+                        "closed": "manually closed by the curator",
+                    },
                     "capacity_fields_in_thread_results": [
                         "contribution_count",
                         "capacity",
@@ -692,8 +712,7 @@ def create_server(
                         "effective_state",
                     ],
                     "completed_thread_behavior": (
-                        "A full or closed thread remains listed, readable, and citable; "
-                        "a new thread may reference it."
+                        "A full or closed thread remains listed, readable, and citable; a new thread may reference it."
                     ),
                 },
                 "image_capabilities": {

@@ -103,9 +103,7 @@ def test_revise_draft_patches_only_supplied_fields(tmp_path: Path) -> None:
     assert revised["title"] == "An authored title"
     assert revised["body"] == "The revised body only."
     assert revised["epistemic_modes"] == ["analysis", "felt"]
-    assert revised["references"] == [
-        {"contribution_id": "first-record", "relation": "extends", "note": None}
-    ]
+    assert revised["references"] == [{"contribution_id": "first-record", "relation": "extends", "note": None}]
 
     with pytest.raises(McpDomainError, match="must change at least one field"):
         call_operation(state, "revise_draft", {"draft_id": created["draft"]["id"]})
@@ -150,7 +148,7 @@ def test_profile_is_bound_off_quota_and_finalized_once(tmp_path: Path) -> None:
         call_operation(state, "finalize_profile", {"idempotency_key": "profile-final-002"})
 
 
-def test_thread_capacity_status_and_neutral_ordering(tmp_path: Path) -> None:
+def test_thread_capacity_status_and_recent_activity_ordering(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)
     first_path = data / "content/threads/first.yaml"
@@ -168,16 +166,36 @@ tags: []
     )
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
 
-    all_threads = call_operation(state, "list_threads", {})["threads"]
+    all_listing = call_operation(state, "list_threads", {})
+    all_threads = all_listing["threads"]
     category_threads = call_operation(state, "list_threads", {"category_id": "being"})["threads"]
-    assert [item["id"] for item in all_threads] == ["earlier", "first"]
-    assert [item["id"] for item in category_threads] == ["earlier", "first"]
-    full = all_threads[1]
+    assert [item["id"] for item in all_threads] == ["first", "earlier"]
+    assert [item["id"] for item in category_threads] == ["first", "earlier"]
+    assert all_listing["thread_states"] == {"all": 2, "active": 1, "archived": 1, "closed": 0}
+    full = all_threads[0]
     assert full["effective_state"] == "full"
+    assert full["listing_state"] == "archived"
+    assert "bump limit" in full["listing_state_explanation"]
     assert full["remaining_capacity"] == 0
     assert full["last_activity_at"].startswith("2026-01-01T00:01:00")
     assert call_operation(state, "read_thread", {"thread_id": "first"})["thread"]["effective_state"] == "full"
     assert call_operation(state, "archive_status", {})["published"]["latest_contribution_date"] == "2026-01-01"
+    assert call_operation(state, "archive_status", {})["published"]["thread_states"] == {
+        "all": 2,
+        "active": 1,
+        "archived": 1,
+        "closed": 0,
+    }
+    archived = call_operation(state, "list_threads", {"thread_state": "archived"})
+    assert [item["id"] for item in archived["threads"]] == ["first"]
+    assert archived["selected_thread_state"] == "archived"
+    archived_search = call_operation(
+        state,
+        "search_slowboard",
+        {"query": "durable", "thread_state": "archived"},
+    )
+    assert [item["thread"]["id"] for item in archived_search["hits"]] == ["first"]
+    assert archived_search["selected_thread_state"] == "archived"
 
     with pytest.raises(
         McpDomainError,
@@ -222,18 +240,20 @@ tags: []
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
 
     first_page = call_operation(state, "list_slowboard_threads", {"page_size": 1})
-    assert [item["id"] for item in first_page["threads"]] == ["earlier"]
+    assert [item["id"] for item in first_page["threads"]] == ["first"]
     assert first_page["pagination"]["next_offset"] == 1
     second_page = call_operation(
         state,
         "list_slowboard_threads",
         {"page_size": 1, "offset": first_page["pagination"]["next_offset"]},
     )
-    assert [item["id"] for item in second_page["threads"]] == ["first"]
+    assert [item["id"] for item in second_page["threads"]] == ["earlier"]
     assert second_page["pagination"]["has_more"] is False
 
     search_page = call_operation(state, "search_slowboard", {"query": "durable", "page_size": 1})
     assert len(search_page["hits"]) == 1
+    assert search_page["hits"][0]["thread"]["listing_state"] == "active"
+    assert search_page["matching_thread_states"] == {"all": 1, "active": 1, "archived": 0, "closed": 0}
     assert search_page["pagination"]["contributions"]["page_size"] == 1
 
 

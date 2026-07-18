@@ -24,6 +24,7 @@ from aibb.runtime.budget import Usage
 
 ASK_MODEL = "perplexity/sonar-pro-search"
 ASK_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+SHARED_WEB_BUDGET = "web"
 ASK_SYSTEM_PROMPT_V1 = (
     "Answer the research question directly. Distinguish established information from uncertainty. "
     "Use current web research and provide source citations."
@@ -161,9 +162,7 @@ def validate_public_url(
     try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         addresses = (
-            {str(literal_address)}
-            if literal_address is not None
-            else {item[4][0] for item in resolver(hostname, port)}
+            {str(literal_address)} if literal_address is not None else {item[4][0] for item in resolver(hostname, port)}
         )
     except socket.gaierror as error:
         raise WorldCapabilityError(f"could not resolve URL hostname: {hostname}") from error
@@ -194,7 +193,15 @@ class WorldCapabilityState:
 
     @property
     def enabled(self) -> set[str]:
+        if SHARED_WEB_BUDGET in self.manifest.capability_budgets:
+            return {"ask", "browse", "verify"}
         return {name for name in ("ask", "browse", "verify") if name in self.manifest.capability_budgets}
+
+    def _budget_account(self, capability: str) -> str:
+        """Use one web allowance for new runs while keeping old manifests resumable."""
+        if SHARED_WEB_BUDGET in self.manifest.capability_budgets:
+            return SHARED_WEB_BUDGET
+        return capability
 
     def _append_log(self, event: dict[str, Any]) -> None:
         payload = {
@@ -208,7 +215,7 @@ class WorldCapabilityState:
             os.fsync(stream.fileno())
 
     def _per_call_limit(self, capability: str, field: str, default: int | float) -> int | float:
-        limits = self.manifest.capability_budgets[capability]
+        limits = self.manifest.capability_budgets[self._budget_account(capability)]
         total = getattr(limits, field)
         calls = limits.max_calls or 1
         return default if total is None else total / calls
@@ -231,7 +238,7 @@ class WorldCapabilityState:
             request_bytes=request_bytes,
             result_bytes=result_bytes,
         )
-        self.ledger.reserve(capability, key, requested)
+        self.ledger.reserve(self._budget_account(capability), key, requested)
         return key, requested
 
     async def ask(self, query: str) -> dict[str, object]:
@@ -254,12 +261,8 @@ class WorldCapabilityState:
         }
         request_bytes = len(_canonical_json(payload).encode("utf-8"))
         reserved_cost = float(self._per_call_limit("ask", "max_cost_usd", 1.0))
-        key, requested = self._reserve(
-            "ask", request_bytes=request_bytes, output_tokens=4_000, cost_usd=reserved_cost
-        )
-        self._append_log(
-            {"type": "ask_requested", "reservation_key": key, "query": query, "model": ASK_MODEL}
-        )
+        key, requested = self._reserve("ask", request_bytes=request_bytes, output_tokens=4_000, cost_usd=reserved_cost)
+        self._append_log({"type": "ask_requested", "reservation_key": key, "query": query, "model": ASK_MODEL})
         try:
             headers = {
                 "Authorization": f"Bearer {self.openrouter_api_key}",
@@ -312,7 +315,7 @@ class WorldCapabilityState:
             }
             result_bytes = len(_canonical_json(result).encode("utf-8"))
             self.ledger.reconcile(
-                "ask",
+                self._budget_account("ask"),
                 key,
                 Usage(
                     calls=1,
@@ -335,9 +338,10 @@ class WorldCapabilityState:
             )
             return result
         except Exception as error:
-            account = self.ledger.read().accounts["ask"]
+            budget_account = self._budget_account("ask")
+            account = self.ledger.read().accounts[budget_account]
             if key in account.reservations:
-                self.ledger.reconcile("ask", key, requested)
+                self.ledger.reconcile(budget_account, key, requested)
             self._append_log(
                 {"type": "ask_failed", "reservation_key": key, "error": type(error).__name__, "message": str(error)}
             )
@@ -446,7 +450,7 @@ class WorldCapabilityState:
                         result["next_offset_bytes"] = next_offset if has_more_extracted else None
                         result_bytes = _fit_result_content(result, requested.result_bytes)
                         self.ledger.reconcile(
-                            capability,
+                            self._budget_account(capability),
                             key,
                             Usage(
                                 calls=1,
@@ -466,9 +470,10 @@ class WorldCapabilityState:
                         return result
                 raise WorldCapabilityError("remote URL exceeded the five-redirect limit")
         except Exception as error:
-            account = self.ledger.read().accounts[capability]
+            budget_account = self._budget_account(capability)
+            account = self.ledger.read().accounts[budget_account]
             if key in account.reservations:
-                self.ledger.reconcile(capability, key, requested)
+                self.ledger.reconcile(budget_account, key, requested)
             self._append_log(
                 {
                     "type": f"{capability}_failed",

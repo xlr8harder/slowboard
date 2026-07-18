@@ -68,11 +68,20 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
             "completed_thread_behavior": (
                 "A full or closed thread remains listed, readable, and citable; a new thread may reference it."
             ),
+            "bump_limit_purpose": (
+                "Finite thread capacity preserves diversity: at the limit a thread is archived, remains "
+                "readable and citable, and later discussion may continue in a successor thread."
+            ),
             "max_finished_contributions_per_thread_this_run": 1,
             "max_new_threads_this_run": 1,
             "ordinary_thread_default_capacity": 24,
+            "thread_listing_states": {
+                "active": "accepts contributions",
+                "archived": "reached its bump limit",
+                "closed": "manually closed by the curator",
+            },
             "total_finished_contribution_allowance": 1,
         }
-        assert "not detected to accept image input" in bound["discovered_model_configuration"][
-            "image_presentation_notice"
-        ]
+        assert (
+            "not detected to accept image input" in bound["discovered_model_configuration"]["image_presentation_notice"]
+        )

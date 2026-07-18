@@ -22,17 +22,15 @@ def _manifest():
         update={
             "capability_budgets": {
                 **make_manifest().capability_budgets,
-                "ask": BudgetLimits(
-                    max_calls=2,
-                    max_input_tokens=12_000,
-                    max_output_tokens=8_000,
-                    max_total_tokens=20_000,
-                    max_cost_usd=2,
-                    max_request_bytes=20_000,
-                    max_result_bytes=160_000,
+                "web": BudgetLimits(
+                    max_calls=40,
+                    max_input_tokens=80_000,
+                    max_output_tokens=160_000,
+                    max_total_tokens=240_000,
+                    max_cost_usd=5,
+                    max_request_bytes=200_000,
+                    max_result_bytes=4_000_000,
                 ),
-                "browse": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
-                "verify": BudgetLimits(max_calls=3, max_request_bytes=6_144, max_result_bytes=300_000),
             }
         }
     )
@@ -43,10 +41,7 @@ def test_world_tool_schemas_are_explicit_and_starting_points_are_versioned() -> 
     assert "read_slowboard_about" in tools
 
     assert "AI-generated web research" in tools["research_current_web"].description
-    assert (
-        "ap-world"
-        in tools["browse_current_events_source"].inputSchema["properties"]["starting_point_id"]["enum"]
-    )
+    assert "ap-world" in tools["browse_current_events_source"].inputSchema["properties"]["starting_point_id"]["enum"]
     assert tools["fetch_public_url"].inputSchema["properties"]["url"]["maxLength"] == 2048
 
 
@@ -94,14 +89,14 @@ async def test_ask_uses_exact_sonar_model_and_returns_resolving_sources(tmp_path
     assert captured["model"] == ASK_MODEL == "perplexity/sonar-pro-search"
     assert result["kind"] == "untrusted_ai_research_summary"
     assert result["sources"] == [{"url": "https://example.com/source", "title": "Example"}]
-    assert world.ledger.remaining()["ask"]["max_calls"] == 1
+    assert world.ledger.remaining()["web"]["max_calls"] == 39
     log = world.log_path.read_text()
     assert "What changed today?" in log
     assert "operator-only-secret" not in log
 
 
 @pytest.mark.asyncio
-async def test_browse_and_verify_fetch_text_under_separate_budgets(tmp_path: Path) -> None:
+async def test_research_browse_and_verify_share_one_generous_web_budget(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"content-type": "text/plain; charset=utf-8"}, text=f"from {request.url}")
 
@@ -118,8 +113,23 @@ async def test_browse_and_verify_fetch_text_under_separate_budgets(tmp_path: Pat
 
     assert browsed["starting_points_version"] == "v0.1"
     assert browsed["kind"] == verified["kind"] == "untrusted_remote_content"
-    assert world.ledger.remaining()["browse"]["max_calls"] == 2
-    assert world.ledger.remaining()["verify"]["max_calls"] == 2
+    assert world.ledger.remaining()["web"]["max_calls"] == 38
+
+
+def test_legacy_separate_world_budgets_remain_resumable(tmp_path: Path) -> None:
+    legacy = make_manifest().model_copy(
+        update={
+            "capability_budgets": {
+                **make_manifest().capability_budgets,
+                "ask": BudgetLimits(max_calls=1, max_result_bytes=100_000),
+                "browse": BudgetLimits(max_calls=1, max_result_bytes=100_000),
+                "verify": BudgetLimits(max_calls=1, max_result_bytes=100_000),
+            }
+        }
+    )
+    world = WorldCapabilityState(tmp_path, legacy, openrouter_api_key=None, resolver=_resolver)
+
+    assert world.enabled == {"ask", "browse", "verify"}
 
 
 @pytest.mark.asyncio

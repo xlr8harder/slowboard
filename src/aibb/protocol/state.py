@@ -36,6 +36,7 @@ class McpDomainError(ValueError):
 
 
 MODEL_VISIBLE_BUDGET_NAMES = {
+    "web": "web_access",
     "ask": "research_current_web",
     "browse": "browse_current_events_source",
     "verify": "fetch_public_url",
@@ -237,6 +238,7 @@ class ArchiveMcpState:
 
     def archive_status(self) -> dict[str, object]:
         corpus = self.corpus()
+        service = ArchiveService(corpus)
         worktree_paths = self._worktree_paths()
         local_contributions = {
             item.metadata.id for item in corpus.contributions.values() if item.source_path in worktree_paths
@@ -251,6 +253,11 @@ class ArchiveMcpState:
             item for item in corpus.published_contributions() if item.metadata.id not in local_contributions
         ]
         latest_published = committed_contributions[-1].metadata.created_at if committed_contributions else None
+        published_thread_results = [
+            self._thread_result(service, item)
+            for item in corpus.threads.values()
+            if f"content/threads/{item.id}.yaml" not in worktree_paths
+        ]
         return {
             "status": "ready",
             "run_id": self.manifest.run_id,
@@ -269,6 +276,7 @@ class ArchiveMcpState:
             "published": {
                 "categories": len(corpus.categories),
                 "threads": len(corpus.threads) - len(local_threads),
+                "thread_states": self._thread_state_counts(published_thread_results),
                 "contributions": len(corpus.published_contributions()) - len(local_contributions),
                 "documents": len(corpus.published_documents()),
                 "profiles": len(corpus.profiles) - len(local_profiles),
@@ -304,10 +312,7 @@ class ArchiveMcpState:
         )
 
     def model_visible_remaining_budgets(self) -> dict[str, object]:
-        return {
-            MODEL_VISIBLE_BUDGET_NAMES.get(name, name): value
-            for name, value in self.ledger.remaining().items()
-        }
+        return {MODEL_VISIBLE_BUDGET_NAMES.get(name, name): value for name, value in self.ledger.remaining().items()}
 
     def list_categories(self) -> dict[str, object]:
         corpus = self.corpus()
@@ -360,24 +365,69 @@ class ArchiveMcpState:
             "publication_state": "published",
         }
 
+    @staticmethod
+    def _normalize_thread_state_filter(thread_state: str | None) -> str:
+        value = thread_state or "all"
+        if value not in {"all", "active", "archived", "closed"}:
+            raise McpDomainError("thread_state must be one of: all, active, archived, closed")
+        return value
+
+    @staticmethod
+    def _thread_state_counts(results: list[dict[str, object]]) -> dict[str, int]:
+        return {
+            "all": len(results),
+            "active": sum(item["listing_state"] == "active" for item in results),
+            "archived": sum(item["listing_state"] == "archived" for item in results),
+            "closed": sum(item["listing_state"] == "closed" for item in results),
+        }
+
     def list_threads(
-        self, category_id: str | None = None, offset: int = 0, page_size: int = 20
+        self,
+        category_id: str | None = None,
+        offset: int = 0,
+        page_size: int = 20,
+        thread_state: str = "all",
     ) -> dict[str, object]:
         corpus = self.corpus()
         service = ArchiveService(corpus)
+        thread_state = self._normalize_thread_state_filter(thread_state)
         threads = sorted(
             (item for item in corpus.threads.values() if category_id is None or item.category_id == category_id),
-            key=lambda item: (item.created_at, item.id),
+            key=lambda item: (service.last_activity(item.id), item.id),
+            reverse=True,
         )
         results = [self._thread_result(service, item) for item in threads]
-        page, pagination = self._page(results, offset, page_size)
-        return {"threads": page, "pagination": pagination}
+        counts = self._thread_state_counts(results)
+        filtered = (
+            results if thread_state == "all" else [item for item in results if item["listing_state"] == thread_state]
+        )
+        page, pagination = self._page(filtered, offset, page_size)
+        return {
+            "threads": page,
+            "thread_states": counts,
+            "selected_thread_state": thread_state,
+            "pagination": pagination,
+        }
 
     def _thread_result(self, service: ArchiveService, thread: ThreadRecord) -> dict[str, object]:
         status = service.thread_status(thread.id)
+        listing_state = service.thread_listing_state(thread.id)
+        state_explanations = {
+            "active": (
+                "This thread accepts contributions. Its finite bump limit exists to preserve diversity by "
+                "eventually continuing the subject in successor threads."
+            ),
+            "archived": (
+                "This thread reached its bump limit. It remains readable, searchable, and citable; a successor "
+                "thread may continue the subject."
+            ),
+            "closed": ("This thread was manually closed by the curator. It remains readable, searchable, and citable."),
+        }
         return {
             **thread.model_dump(mode="json"),
             **status.__dict__,
+            "listing_state": listing_state,
+            "listing_state_explanation": state_explanations[listing_state],
             "last_activity_at": service.last_activity(thread.id).isoformat(),
             "local_worktree": f"content/threads/{thread.id}.yaml" in self._worktree_paths(),
         }
@@ -448,13 +498,25 @@ class ArchiveMcpState:
         model_name: str | None,
         page_size: int,
         offset: int = 0,
+        thread_state: str = "all",
     ) -> dict[str, object]:
         corpus = self.corpus()
-        hits = ArchiveService(corpus).search(
+        service = ArchiveService(corpus)
+        thread_state = self._normalize_thread_state_filter(thread_state)
+        all_hits = service.search(
             query,
             category_id=category_id,
             normalized_model_name=model_name,
-            limit=offset + page_size + 1,
+            limit=None,
+        )
+        matching_threads: dict[str, dict[str, object]] = {
+            hit.thread.id: self._thread_result(service, hit.thread) for hit in all_hits
+        }
+        matching_thread_states = self._thread_state_counts(list(matching_threads.values()))
+        hits = (
+            all_hits
+            if thread_state == "all"
+            else [hit for hit in all_hits if service.thread_listing_state(hit.thread.id) == thread_state]
         )
         terms = [term.casefold() for term in query.split() if term]
         document_hits = []
@@ -476,18 +538,20 @@ class ArchiveMcpState:
                 )
         document_hits.sort(key=lambda item: item["score"], reverse=True)
         contribution_results = [
-                {
-                    "score": hit.score,
-                    "thread": hit.thread.model_dump(mode="json"),
-                    "contribution": self._contribution_result(corpus, hit.contribution),
-                }
-                for hit in hits
-            ]
+            {
+                "score": hit.score,
+                "thread": self._thread_result(service, hit.thread),
+                "contribution": self._contribution_result(corpus, hit.contribution),
+            }
+            for hit in hits
+        ]
         contribution_page, contribution_pagination = self._page(contribution_results, offset, page_size)
         document_page, document_pagination = self._page(document_hits, offset, page_size)
         return {
             "hits": contribution_page,
             "document_hits": document_page,
+            "matching_thread_states": matching_thread_states,
+            "selected_thread_state": thread_state,
             "pagination": {
                 "contributions": contribution_pagination,
                 "origin_documents": document_pagination,

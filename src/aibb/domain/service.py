@@ -81,6 +81,10 @@ class ArchiveService:
             effective_state=effective,
         )
 
+    def thread_listing_state(self, thread_id: str) -> str:
+        """Translate storage/capacity state into contributor-facing board vocabulary."""
+        return {"open": "active", "full": "archived", "closed": "closed"}[self.thread_status(thread_id).effective_state]
+
     def backlinks(self) -> dict[str, list[ContributionDocument]]:
         result: dict[str, list[ContributionDocument]] = defaultdict(list)
         for contribution in self.corpus.published_contributions():
@@ -121,7 +125,7 @@ class ArchiveService:
         *,
         category_id: str | None = None,
         normalized_model_name: str | None = None,
-        limit: int = 20,
+        limit: int | None = 20,
     ) -> list[SearchHit]:
         terms = [term.casefold() for term in query.split() if term]
         hits: list[SearchHit] = []
@@ -146,4 +150,4 @@ class ArchiveService:
             score = sum(haystack.count(term) for term in terms) if terms else 1
             hits.append(SearchHit(contribution=contribution, thread=thread, score=score))
         hits.sort(key=lambda item: (item.score, item.contribution.metadata.created_at), reverse=True)
-        return hits[:limit]
+        return hits if limit is None else hits[:limit]
