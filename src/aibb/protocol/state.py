@@ -434,12 +434,21 @@ class ArchiveMcpState:
             "local_worktree": f"content/threads/{thread.id}.yaml" in self._worktree_paths(),
         }
 
+    @staticmethod
+    def _resolve_thread_id(corpus, thread_reference: str) -> str:
+        if thread_reference in corpus.threads:
+            return thread_reference
+        matches = [thread.id for thread in corpus.threads.values() if thread.slug == thread_reference]
+        if len(matches) == 1:
+            return matches[0]
+        raise McpDomainError(
+            f"Unknown thread: {thread_reference}. Use an id or slug returned by list_slowboard_threads."
+        )
+
     def read_thread(self, thread_id: str, offset: int = 0, page_size: int = 24) -> dict[str, object]:
         corpus = self.corpus()
-        try:
-            thread = corpus.threads[thread_id]
-        except KeyError as error:
-            raise McpDomainError(f"Unknown thread: {thread_id}") from error
+        thread_id = self._resolve_thread_id(corpus, thread_id)
+        thread = corpus.threads[thread_id]
         service = ArchiveService(corpus)
         contributions = [
             self._contribution_result(corpus, item) for item in service.contributions_for_thread(thread_id)
@@ -627,6 +636,10 @@ class ArchiveMcpState:
                 raise McpDomainError(f"Unknown referenced contribution: {reference.contribution_id}")
 
     def create_draft(self, value: DraftInput) -> dict[str, object]:
+        if value.target_thread_id:
+            value = value.model_copy(
+                update={"target_thread_id": self._resolve_thread_id(self.corpus(), value.target_thread_id)}
+            )
         self._validate_draft(value)
         digest = hashlib.sha256(
             f"{self.manifest.run_id}:{datetime.now(UTC).isoformat()}:{value.body}".encode()
@@ -642,6 +655,10 @@ class ArchiveMcpState:
         payload = current.model_dump(exclude={"id", "revision", "created_at"})
         payload.update(updates)
         value = DraftInput.model_validate(payload)
+        if value.target_thread_id:
+            value = value.model_copy(
+                update={"target_thread_id": self._resolve_thread_id(self.corpus(), value.target_thread_id)}
+            )
         self._validate_draft(value)
         draft = StoredDraft(
             **value.model_dump(), id=current.id, revision=current.revision + 1, created_at=current.created_at

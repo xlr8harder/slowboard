@@ -52,6 +52,42 @@ def _decode_reasoning_details(value: str | None) -> list[dict[str, Any]] | None:
     return decoded if isinstance(decoded, list) else None
 
 
+def _parse_tool_arguments(value: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Decode one provider tool call, repairing only an unambiguous extra closing brace.
+
+    Some OpenRouter routes occasionally return a valid JSON object followed by one or
+    more unmatched ``}`` characters.  The intended object is uniquely recoverable in
+    that case.  Everything else remains an error rather than inviting a general JSON
+    repair heuristic that could change model intent.
+    """
+
+    if isinstance(value, dict):
+        return value, None
+    raw = value if isinstance(value, str) else "{}" if value is None else str(value)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as error:
+        candidate = raw.strip()
+        try:
+            parsed, end = json.JSONDecoder().raw_decode(candidate)
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+        trailing = candidate[end:].strip()
+        if not trailing or set(trailing) != {"}"}:
+            raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
+        return parsed, {
+            "repair": "removed_unmatched_trailing_closing_braces",
+            "raw_arguments": raw,
+            "normalized_arguments": parsed,
+            "removed_suffix": trailing,
+        }
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Provider returned tool arguments that are not a JSON object")
+    return parsed, None
+
+
 def openrouter_model(
     model_id: str,
     *,
@@ -404,10 +440,18 @@ class OpenRouterAdapter:
                 stream.push(TextEndEvent(contentIndex=index, content=content, partial=output))
             for raw_call in raw_tool_calls:
                 function = raw_call["function"]
-                try:
-                    arguments = json.loads(function.get("arguments") or "{}")
-                except json.JSONDecodeError as error:
-                    raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
+                arguments, repair = _parse_tool_arguments(function.get("arguments"))
+                if repair:
+                    self.session.append(
+                        "provider_tool_arguments_repaired",
+                        {
+                            "reservation_key": reservation_key,
+                            "tool_call_id": raw_call["id"],
+                            "tool_name": function["name"],
+                            **repair,
+                        },
+                        "private_provider",
+                    )
                 block = ToolCall(id=raw_call["id"], name=function["name"], arguments=arguments)
                 output.content.append(block)
                 index = len(output.content) - 1

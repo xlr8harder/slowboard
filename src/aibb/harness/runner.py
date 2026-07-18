@@ -251,6 +251,17 @@ def _assistant_text(engine: AibbHarnessEngine) -> str:
     return "".join(block.text for block in message.content if isinstance(block, TextContent))
 
 
+def _provider_error_at_boundary(engine: AibbHarnessEngine) -> str | None:
+    """Return the provider failure at the latest safe boundary, if any."""
+
+    if not engine.messages:
+        return None
+    message = engine.messages[-1]
+    if getattr(message, "role", None) != "assistant" or getattr(message, "stopReason", None) != "error":
+        return None
+    return getattr(message, "errorMessage", None) or "provider response failed"
+
+
 def _tool_definitions(tools: list[Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -535,7 +546,7 @@ async def run_openrouter_visit(
             *,
             allow_queued_input: bool = False,
             source: Literal["curator", "harness"] = "curator",
-        ) -> None:
+        ) -> str | None:
             if text is None:
                 store.append("context_only_begin", {}, "operator")
                 run_task = asyncio.create_task(engine.begin())
@@ -582,6 +593,7 @@ async def run_openrouter_visit(
             if response_text:
                 console.print("\n[bold cyan]Model[/bold cyan]")
                 console.print(response_text)
+            return _provider_error_at_boundary(engine)
 
         def compact(*, authorization: Literal["curator", "manifest-allow"]) -> bool:
             if apply_compaction(engine, authorization=authorization) is None:
@@ -609,15 +621,21 @@ async def run_openrouter_visit(
         if opening is not None or manifest.mode == "headless":
             next_message = opening
             next_source: Literal["curator", "harness"] = "curator"
-            continuation_attempts = sum(
-                event.type == "headless_continuation_message" for event in store.read_events()
-            )
+            continuation_attempts = sum(event.type == "headless_continuation_message" for event in store.read_events())
             while True:
-                await send(
+                provider_error = await send(
                     next_message,
                     allow_queued_input=False,
                     source=next_source,
                 )
+                if provider_error:
+                    store.append(
+                        "run_suspended",
+                        {"reason": "provider error", "message": provider_error},
+                        "operator",
+                    )
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
                 maybe_compact()
                 outcome = _turn_boundary_outcome(manifest, run_dir, once=once)
                 if outcome == "model_completed":

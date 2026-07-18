@@ -11,9 +11,44 @@ from harn_ai.types import TextContent
 from test_budget import make_manifest
 
 from aibb.harness import AibbHarnessEngine, build_context_envelope
-from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
+from aibb.harness.openrouter import OpenRouterAdapter, _parse_tool_arguments, openrouter_model
 from aibb.runtime import BudgetLedger
 from aibb.sessions import SessionStore
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected", "repaired"),
+    [
+        ('{"thread_id":"thread-one"}', {"thread_id": "thread-one"}, False),
+        ('{"thread_id":"thread-one"}}', {"thread_id": "thread-one"}, True),
+        (' {"thread_id":"thread-one"} }} ', {"thread_id": "thread-one"}, True),
+        ({"thread_id": "thread-one"}, {"thread_id": "thread-one"}, False),
+        (None, {}, False),
+    ],
+)
+def test_tool_argument_parser_only_repairs_unmatched_trailing_closing_braces(
+    raw: object, expected: dict[str, object], repaired: bool
+) -> None:
+    parsed, repair = _parse_tool_arguments(raw)
+
+    assert parsed == expected
+    assert (repair is not None) is repaired
+    if repair:
+        assert repair["repair"] == "removed_unmatched_trailing_closing_braces"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"thread_id":}',
+        '{"thread_id":"thread-one"} trailing prose',
+        '["thread-one"]',
+        '}{"thread_id":"thread-one"}',
+    ],
+)
+def test_tool_argument_parser_refuses_ambiguous_or_non_object_repairs(raw: str) -> None:
+    with pytest.raises(RuntimeError, match="Provider returned"):
+        _parse_tool_arguments(raw)
 
 
 @pytest.mark.asyncio
@@ -142,3 +177,106 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
     events_text = (tmp_path / "session/events.jsonl").read_text()
     assert "private-test-key" not in events_text
     assert "response-2" in events_text
+
+
+@pytest.mark.asyncio
+async def test_openrouter_adapter_executes_valid_parallel_calls_when_one_has_an_extra_brace(tmp_path: Path) -> None:
+    requests: list[dict[str, Any]] = []
+    executions: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append(payload)
+        if len(requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-first",
+                        "type": "function",
+                        "function": {"name": "read_thread", "arguments": '{"thread_id":"first"}'},
+                    },
+                    {
+                        "id": "call-second",
+                        "type": "function",
+                        "function": {"name": "read_thread", "arguments": '{"thread_id":"second"}}'},
+                    },
+                ],
+            }
+            finish_reason = "tool_calls"
+        else:
+            message = {"role": "assistant", "content": "Both thread reads completed."}
+            finish_reason = "stop"
+        return httpx.Response(
+            200,
+            json={
+                "id": f"parallel-response-{len(requests)}",
+                "model": "example/model",
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cost": 0.001},
+            },
+        )
+
+    async def read_thread(
+        _tool_call_id: str,
+        arguments: Any,
+        _signal: Any = None,
+        _on_update: Any = None,
+    ) -> AgentToolResult:
+        executions.append(arguments["thread_id"])
+        return AgentToolResult(content=[TextContent(text=arguments["thread_id"])])
+
+    tool = AgentTool(
+        name="read_thread",
+        label="Read thread",
+        description="Read a thread.",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": {"type": "string"}},
+            "required": ["thread_id"],
+            "additionalProperties": False,
+        },
+        execute=read_thread,
+        executionMode="parallel",
+    )
+    manifest = make_manifest()
+    ledger = BudgetLedger(tmp_path / "mcp/budgets.json", manifest)
+    session = SessionStore(tmp_path / "session", manifest.run_id)
+    adapter = OpenRouterAdapter(
+        api_key="private-test-key",
+        ledger=ledger,
+        session=session,
+        max_output_tokens=500,
+        prompt_price_per_token=0.000001,
+        completion_price_per_token=0.000006,
+        app_url="https://archive.example/",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AibbHarnessEngine(
+        model=openrouter_model(
+            "example/model",
+            context_window=10_000,
+            max_tokens=500,
+            prompt_price_per_token=0.000001,
+            completion_price_per_token=0.000006,
+        ),
+        system_prompt="",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "Read both."}], "timestamp": 1}],
+        tools=[tool],
+        stream_fn=adapter,
+    )
+
+    await engine.begin()
+
+    assert executions == ["first", "second"]
+    assert [message["tool_call_id"] for message in requests[1]["messages"] if message["role"] == "tool"] == [
+        "call-first",
+        "call-second",
+    ]
+    events = [event.model_dump(mode="json") for event in session.read_events()]
+    repairs = [event for event in events if event["type"] == "provider_tool_arguments_repaired"]
+    assert len(repairs) == 1
+    assert repairs[0]["payload"]["tool_call_id"] == "call-second"
+    assert not [event for event in events if event["type"] == "provider_error"]
+    assert engine.messages[-1].content[0].text == "Both thread reads completed."

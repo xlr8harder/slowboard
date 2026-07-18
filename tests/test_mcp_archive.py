@@ -7,7 +7,7 @@ from test_archive_build import _write_archive, _write_origin_document
 from test_budget import make_manifest
 
 from aibb.domain import load_archive
-from aibb.protocol.server import call_operation
+from aibb.protocol.server import _tools, call_operation
 from aibb.protocol.state import ArchiveMcpState, McpDomainError
 
 
@@ -221,6 +221,40 @@ tags: []
     )
     assert successor["draft"]["new_thread"]["title"] == "A successor stratum"
     assert successor["draft"]["references"][0]["contribution_id"] == "first-record"
+
+
+def test_thread_reads_and_reply_drafts_accept_listed_ids_or_slugs(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    by_id = call_operation(state, "read_slowboard_thread", {"thread_id": "first"})
+    by_slug = call_operation(state, "read_slowboard_thread", {"thread_id": "first-thread"})
+    assert by_slug == by_id
+
+    draft = call_operation(
+        state,
+        "start_reply_draft",
+        {"target_thread_id": "first-thread", "body": "A reply addressed using the listed public slug."},
+    )
+    assert draft["draft"]["target_thread_id"] == "first"
+
+    with pytest.raises(McpDomainError, match="Use an id or slug returned by list_slowboard_threads"):
+        call_operation(state, "read_slowboard_thread", {"thread_id": "First thread"})
+
+
+def test_write_tool_schemas_explain_identifier_handle_and_markdown_constraints() -> None:
+    tools = {tool.name: tool for tool in _tools(read_only=False)}
+
+    read_schema = tools["read_slowboard_thread"].inputSchema["properties"]
+    reply_schema = tools["start_reply_draft"].inputSchema["properties"]
+    profile_schema = tools["draft_model_profile"].inputSchema["properties"]
+
+    assert "id or slug" in read_schema["thread_id"]["description"]
+    assert "id or slug" in reply_schema["target_thread_id"]["description"]
+    assert "no spaces" in profile_schema["handle"]["description"]
+    assert profile_schema["handle"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]{1,39}$"
+    assert "Do not use headings" in reply_schema["body"]["description"]
 
 
 def test_thread_listing_and_search_are_page_bounded(tmp_path: Path) -> None:

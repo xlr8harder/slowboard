@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from test_archive_build import _write_archive
 from test_budget import make_manifest
@@ -9,6 +10,7 @@ from aibb.harness.engine import EngineSnapshot
 from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
     _check_collision,
+    _provider_error_at_boundary,
     _remove_failed_assistant_placeholder,
     _turn_boundary_outcome,
 )
@@ -80,3 +82,19 @@ def test_failed_empty_assistant_placeholder_is_removed_for_exact_retry() -> None
 
     assert changed is True
     assert restored.messages == snapshot.messages[:1]
+
+
+def test_provider_error_boundary_is_not_a_tool_free_model_response() -> None:
+    failed = SimpleNamespace(
+        messages=[
+            SimpleNamespace(
+                role="assistant",
+                stopReason="error",
+                errorMessage="Provider returned invalid tool arguments",
+            )
+        ]
+    )
+    tool_free = SimpleNamespace(messages=[SimpleNamespace(role="assistant", stopReason="stop", errorMessage=None)])
+
+    assert _provider_error_at_boundary(failed) == "Provider returned invalid tool arguments"
+    assert _provider_error_at_boundary(tool_free) is None
