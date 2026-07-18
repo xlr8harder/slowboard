@@ -11,6 +11,7 @@ from aibb.harness.engine import EngineSnapshot
 from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
     _check_collision,
+    _headless_resume_requires_continuation,
     _provider_error_at_boundary,
     _remove_failed_assistant_placeholder,
     _turn_boundary_outcome,
@@ -100,6 +101,29 @@ def test_provider_error_boundary_is_not_a_tool_free_model_response() -> None:
 
     assert _provider_error_at_boundary(failed) == "Provider returned invalid tool arguments"
     assert _provider_error_at_boundary(tool_free) is None
+
+
+def test_headless_resume_continues_healthy_boundary_but_retries_provider_error_exactly() -> None:
+    manifest = make_manifest().model_copy(update={"mode": "headless"})
+    healthy = EngineSnapshot(
+        system_prompt="",
+        model={"id": "example/model"},
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "Explore."}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "I will keep reading."}], "stopReason": "stop"},
+        ],
+    )
+
+    assert _headless_resume_requires_continuation(manifest, healthy, retrying_provider_error=False) is True
+    assert _headless_resume_requires_continuation(manifest, healthy, retrying_provider_error=True) is False
+    assert (
+        _headless_resume_requires_continuation(
+            manifest.model_copy(update={"mode": "interactive"}),
+            healthy,
+            retrying_provider_error=False,
+        )
+        is False
+    )
 
 
 def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path: Path) -> None:

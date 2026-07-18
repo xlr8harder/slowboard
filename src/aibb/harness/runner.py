@@ -267,6 +267,20 @@ def _provider_error_at_boundary(engine: AibbHarnessEngine) -> str | None:
     return getattr(message, "errorMessage", None) or "provider response failed"
 
 
+def _headless_resume_requires_continuation(
+    manifest: RunManifest,
+    snapshot: EngineSnapshot,
+    *,
+    retrying_provider_error: bool,
+) -> bool:
+    """Distinguish an exact provider retry from a healthy suspended model boundary."""
+
+    if manifest.mode != "headless" or retrying_provider_error or not snapshot.messages:
+        return False
+    last = snapshot.messages[-1]
+    return last.get("role") == "assistant" and last.get("stopReason") != "error"
+
+
 def _tool_definitions(tools: list[Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -485,6 +499,8 @@ async def run_model_visit(
     async with StdioMcpBridge(parameters) as bridge:
         tools = await bridge.agent_tools()
         checkpoint_path = run_dir / "session/checkpoint.json"
+        resumed_from_checkpoint = checkpoint_path.exists()
+        retrying_provider_error = False
         if checkpoint_path.exists():
             checkpoint = store.read_checkpoint(
                 allowed_trailing_event_types={"run_resumed", "context_only_begin", "provider_retry_prepared"}
@@ -645,6 +661,30 @@ async def run_model_visit(
             next_message = opening
             next_source: Literal["curator", "harness"] = "curator"
             continuation_attempts = sum(event.type == "headless_continuation_message" for event in store.read_events())
+            if (
+                opening is None
+                and resumed_from_checkpoint
+                and _headless_resume_requires_continuation(
+                    manifest,
+                    engine.snapshot(),
+                    retrying_provider_error=retrying_provider_error,
+                )
+            ):
+                if continuation_attempts >= manifest.max_headless_continuations:
+                    store.append(
+                        "run_suspended",
+                        {
+                            "reason": "headless continuation ceiling reached without conclude_visit",
+                            "continuation_attempts": continuation_attempts,
+                            "continuation_version": manifest.headless_continuation_version,
+                        },
+                        "operator",
+                    )
+                    store.write_checkpoint(engine.snapshot())
+                    return manifest.run_id
+                continuation_attempts += 1
+                next_message = HEADLESS_CONTINUATION_MESSAGES[manifest.headless_continuation_version]
+                next_source = "harness"
             while True:
                 provider_error = await send(
                     next_message,
