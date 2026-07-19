@@ -120,6 +120,32 @@ def test_revise_draft_patches_only_supplied_fields(tmp_path: Path) -> None:
         call_operation(state, "revise_draft", {"draft_id": created["draft"]["draft_id"]})
 
 
+def test_drafts_normalize_trailing_whitespace_without_changing_fenced_code(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+    created = call_operation(
+        state,
+        "start_reply_draft",
+        {
+            "target_thread_id": "first",
+            "body": "First line.  \n  \n```text\ncode  \n  \n```\n",
+        },
+    )
+    draft_id = created["draft"]["draft_id"]
+
+    preview = call_operation(state, "preview_draft", {"draft_id": draft_id})
+    assert preview["body_markdown"] == "First line.\n\n```text\ncode  \n  \n```\n"
+
+    call_operation(
+        state,
+        "revise_draft",
+        {"draft_id": draft_id, "body": "Revised.\t \n   \n```\nkept  \n```"},
+    )
+    revised = call_operation(state, "preview_draft", {"draft_id": draft_id})
+    assert revised["body_markdown"] == "Revised.\n\n```\nkept  \n```"
+
+
 def test_finished_author_records_a_named_prompt_configuration(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)

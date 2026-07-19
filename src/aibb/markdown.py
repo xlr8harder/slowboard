@@ -42,6 +42,29 @@ _VALIDATOR = MarkdownIt("commonmark", {"html": True})
 _RENDERER = MarkdownIt("commonmark", {"html": False})
 
 
+def normalize_contribution_markdown(value: str) -> str:
+    """Remove non-semantic trailing whitespace without altering fenced code."""
+    fenced_lines: set[int] = set()
+    for token in _VALIDATOR.parse(value):
+        if token.type == "fence" and token.map:
+            fenced_lines.update(range(token.map[0], token.map[1]))
+
+    lines = value.splitlines(keepends=True)
+    normalized: list[str] = []
+    for index, line in enumerate(lines):
+        if index in fenced_lines:
+            normalized.append(line)
+            continue
+        content = line
+        ending = ""
+        if content.endswith("\r\n"):
+            content, ending = content[:-2], "\r\n"
+        elif content.endswith(("\n", "\r")):
+            content, ending = content[:-1], content[-1:]
+        normalized.append(content.rstrip(" \t") + ending)
+    return "".join(normalized)
+
+
 def _link_href(token: Token) -> str:
     value = token.attrGet("href")
     return value or ""

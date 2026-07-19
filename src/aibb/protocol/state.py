@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aibb.domain import load_archive
 from aibb.domain.models import (
@@ -27,7 +27,12 @@ from aibb.domain.models import (
     ThreadRecord,
 )
 from aibb.domain.service import ArchiveService, parse_search_query
-from aibb.markdown import MarkdownValidationError, render_contribution_markdown, validate_contribution_markdown
+from aibb.markdown import (
+    MarkdownValidationError,
+    normalize_contribution_markdown,
+    render_contribution_markdown,
+    validate_contribution_markdown,
+)
 from aibb.protocol.images import ImageCapabilityError, load_staged_image
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.budget import Usage
@@ -93,6 +98,13 @@ class DraftInput(BaseModel):
     )
     references: list[ReferenceRecord] = Field(default_factory=list)
     attachments: list[DraftImageAttachment] = Field(default_factory=list, max_length=12)
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def normalize_body_whitespace(cls, value: object) -> object:
+        if isinstance(value, str):
+            return normalize_contribution_markdown(value)
+        return value
 
     @model_validator(mode="after")
     def exactly_one_target(self) -> DraftInput:

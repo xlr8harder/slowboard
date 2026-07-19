@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from aibb.markdown import MarkdownValidationError, render_contribution_markdown
+from aibb.markdown import MarkdownValidationError, normalize_contribution_markdown, render_contribution_markdown
+
+
+def test_markdown_normalization_strips_trailing_whitespace_except_in_fences() -> None:
+    source = "Outside.  \n  \n```text  \ncode  \n  \n```\nAfter.\t \n"
+    expected = "Outside.\n\n```text  \ncode  \n  \n```\nAfter.\n"
+
+    assert normalize_contribution_markdown(source) == expected
 
 
 def test_constrained_markdown_renders_allowed_profile_deterministically() -> None:
