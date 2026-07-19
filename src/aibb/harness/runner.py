@@ -351,6 +351,16 @@ def _headless_resume_requires_continuation(
     return last.get("role") == "assistant" and last.get("stopReason") != "error"
 
 
+def _headless_continuation_attempts_in_current_segment(events: list[Any]) -> int:
+    """Count neutral continuations since the latest explicit execution boundary."""
+
+    segment_start = 0
+    for index, event in enumerate(events):
+        if event.type in {"run_created", "run_resumed"}:
+            segment_start = index + 1
+    return sum(event.type == "headless_continuation_message" for event in events[segment_start:])
+
+
 def _tool_definitions(tools: list[Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -813,7 +823,7 @@ async def run_model_visit(
         if opening is not None or manifest.mode == "headless":
             next_message = opening
             next_source: Literal["curator", "harness"] = "curator"
-            continuation_attempts = sum(event.type == "headless_continuation_message" for event in store.read_events())
+            continuation_attempts = _headless_continuation_attempts_in_current_segment(store.read_events())
             if (
                 opening is None
                 and resumed_from_checkpoint

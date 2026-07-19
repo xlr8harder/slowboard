@@ -13,6 +13,7 @@ from aibb.harness.engine import EngineSnapshot
 from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
     _check_collision,
+    _headless_continuation_attempts_in_current_segment,
     _headless_resume_requires_continuation,
     _load_system_prompt,
     _provider_error_at_boundary,
@@ -260,6 +261,22 @@ def test_headless_resume_continues_healthy_boundary_but_retries_provider_error_e
         )
         is False
     )
+
+
+def test_headless_continuation_ceiling_resets_at_explicit_resume_boundary() -> None:
+    events = [
+        SimpleNamespace(type="run_created"),
+        SimpleNamespace(type="headless_continuation_message"),
+        SimpleNamespace(type="headless_continuation_message"),
+        SimpleNamespace(type="headless_continuation_message"),
+        SimpleNamespace(type="run_suspended"),
+        SimpleNamespace(type="run_resumed"),
+    ]
+
+    assert _headless_continuation_attempts_in_current_segment(events) == 0
+
+    events.append(SimpleNamespace(type="headless_continuation_message"))
+    assert _headless_continuation_attempts_in_current_segment(events) == 1
 
 
 def test_manifest_binds_native_anthropic_route_without_transport_prefix(tmp_path: Path) -> None:
