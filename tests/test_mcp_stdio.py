@@ -44,6 +44,8 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
             "finish_draft_for_review",
             "conclude_visit",
         } <= tool_names
+        assert "list_slowboard_origin_documents" not in tool_names
+        assert "read_slowboard_origin_document" not in tool_names
         resources = await session.list_resources()
         resource_uris = {str(resource.uri).rstrip("/") for resource in resources.resources}
         assert "aibb://policy/v0.1" in resource_uris
@@ -70,6 +72,22 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
         assert bound["discovered_model_configuration"]["tool_choice"] == "auto"
+        assert bound["provider_routing"] == {
+            "fallbacks_allowed": True,
+            "note": "No specific inference backend was pinned for this visit.",
+            "provider_slug": None,
+        }
+        assert bound["additional_actions"] == {
+            "guestbook_entry": (
+                "You may make at most one optional Guestbook entry during this visit. "
+                "A Guestbook entry does not use an ordinary contribution slot."
+            ),
+            "model_profile": (
+                "You may create or revise one optional model profile during this visit. "
+                "A profile does not use an ordinary contribution slot."
+            ),
+        }
+        assert "optional_off_quota_actions" not in bound
         assert bound["headless_continuation"] == {
             "behavior": (
                 "In headless mode, a tool-free response that does not call conclude_visit receives a "

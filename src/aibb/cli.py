@@ -16,7 +16,7 @@ from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
-from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
+from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.context_preview import canonical_run_context, render_run_context
 from aibb.harness.google_agent_platform import (
     GROK_4_1_FAST_CONTEXT_WINDOW,
@@ -27,7 +27,7 @@ from aibb.harness.runner import create_run_manifest, run_model_visit
 from aibb.harness.watch import latest_run_directory, watch_event_stream, watch_state_root
 from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.runtime import BudgetLedger, RunManifest
-from aibb.runtime.models import BudgetLimits, ReasoningConfiguration
+from aibb.runtime.models import BudgetLimits, OpenRouterRoutingConfiguration, ReasoningConfiguration
 from aibb.sessions import SessionStore
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
@@ -446,6 +446,16 @@ def run_model(
         Literal["openrouter", "anthropic", "google_agent_platform"],
         typer.Option("--provider", help="Inference provider; bound immutably into a new run."),
     ] = "openrouter",
+    openrouter_provider: Annotated[
+        str | None,
+        typer.Option(
+            "--openrouter-provider",
+            help=(
+                "Pin a new OpenRouter run to one provider slug. Fallbacks are disabled and required request "
+                "parameters are enforced."
+            ),
+        ),
+    ] = None,
     model: Annotated[str, typer.Option("--model", help="Exact model ID for the selected provider.")] = (
         "openai/gpt-5.6-luna"
     ),
@@ -591,6 +601,8 @@ def run_model(
     if site.environment == "lab" and production:
         raise typer.BadParameter("--production cannot be used with a lab data repository")
     if resume_run:
+        if openrouter_provider is not None:
+            raise typer.BadParameter("A resumed run uses its persisted provider route; omit --openrouter-provider")
         if system_prompt_file or system_prompt_label or system_prompt_source_url:
             raise typer.BadParameter("A resumed run uses its persisted system prompt; do not supply prompt options")
         run_dir = state_root / resume_run
@@ -605,6 +617,8 @@ def run_model(
         run_id = resume_run
     else:
         selected_provider = provider
+        if openrouter_provider is not None and selected_provider != "openrouter":
+            raise typer.BadParameter("--openrouter-provider is only valid with --provider openrouter")
 
     key_name = {
         "anthropic": "ANTHROPIC_API_KEY",
@@ -632,19 +646,46 @@ def run_model(
                 raise typer.BadParameter("--system-prompt-file must not contain NUL characters")
         if selected_provider == "openrouter":
             catalog = asyncio.run(fetch_openrouter_model(model))
-            catalog_context_window = catalog.effective_context_length
-            catalog_max_completion = catalog.max_completion_tokens
+            endpoint_catalog = (
+                asyncio.run(fetch_openrouter_endpoint(model, openrouter_provider)) if openrouter_provider else None
+            )
+            catalog_context_window = min(
+                catalog.effective_context_length,
+                endpoint_catalog.context_length if endpoint_catalog is not None else catalog.effective_context_length,
+            )
+            catalog_max_completion = (
+                endpoint_catalog.max_completion_tokens
+                if endpoint_catalog is not None
+                else catalog.max_completion_tokens
+            )
             catalog_input_modalities = sorted(catalog.input_modalities)
             catalog_image_input = catalog.supports_image_input
-            prompt_price = catalog.prompt_price
-            completion_price = catalog.completion_price
-            developer = catalog.developer
-            effective_output_tokens = catalog.clamp_output_tokens(max_output_tokens)
-            effective_cost_usd = max_cost_usd or catalog.recommend_cost_ceiling(
-                provider_turns=max_provider_turns,
-                output_tokens_per_turn=effective_output_tokens,
+            prompt_price = endpoint_catalog.prompt_price if endpoint_catalog is not None else catalog.prompt_price
+            completion_price = (
+                endpoint_catalog.completion_price if endpoint_catalog is not None else catalog.completion_price
             )
+            developer = catalog.developer
+            effective_output_tokens = min(
+                max_output_tokens,
+                catalog_max_completion or catalog_context_window,
+                max(1, catalog_context_window - 4096),
+            )
+            average_input_tokens = min(60_000, max(8_000, catalog_context_window // 8))
+            average_output_tokens = min(4_000, effective_output_tokens)
+            estimated_cost = max_provider_turns * (
+                average_input_tokens * prompt_price + average_output_tokens * completion_price
+            )
+            effective_cost_usd = max_cost_usd or round(max(0.5, estimated_cost * 1.5), 2)
             reasoning_configuration = catalog.select_reasoning(reasoning_mode)
+            openrouter_routing_configuration = (
+                OpenRouterRoutingConfiguration(
+                    provider_slug=openrouter_provider,
+                    provider_name=endpoint_catalog.provider_name,
+                    quantization=endpoint_catalog.quantization,
+                )
+                if openrouter_provider is not None and endpoint_catalog is not None
+                else None
+            )
             endpoint = None
         elif selected_provider == "anthropic":
             catalog_model = anthropic_model(model)
@@ -668,6 +709,7 @@ def run_model(
             if reasoning_mode not in {"auto", "disabled"}:
                 raise typer.BadParameter(f"{model} does not support Anthropic extended thinking")
             reasoning_configuration = ReasoningConfiguration(enabled=False, source="unavailable")
+            openrouter_routing_configuration = None
             endpoint = ANTHROPIC_ENDPOINT
         else:
             if model != GROK_4_1_FAST_REASONING:
@@ -698,6 +740,7 @@ def run_model(
                 mandatory=True,
                 source="provider-default" if reasoning_mode == "auto" else "curator-override",
             )
+            openrouter_routing_configuration = None
 
         image_input_supported = catalog_image_input if image_input == "auto" else image_input == "allow"
         image_capabilities_enabled = _resolve_image_policy(images, image_input_supported)
@@ -731,6 +774,7 @@ def run_model(
             developer=developer,
             model_input_modalities=catalog_input_modalities,
             reasoning=reasoning_configuration,
+            openrouter_routing=openrouter_routing_configuration,
             tool_choice=tool_choice,
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
@@ -766,6 +810,11 @@ def run_model(
                     "image_generation_model": image_generation_model if image_capabilities_enabled else None,
                     "developer": developer,
                     "reasoning": reasoning_configuration.model_dump(mode="json"),
+                    "openrouter_routing": (
+                        openrouter_routing_configuration.model_dump(mode="json")
+                        if openrouter_routing_configuration is not None
+                        else None
+                    ),
                     "tool_choice": tool_choice,
                     "system_prompt": (
                         {

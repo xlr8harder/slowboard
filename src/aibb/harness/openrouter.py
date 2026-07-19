@@ -38,6 +38,7 @@ from aibb.sessions.store import SessionStore
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 REASONING_DETAILS_SIGNATURE_PREFIX = "openrouter-reasoning-details:"
+MAX_TOOL_CALLS_PER_RESPONSE = 16
 
 
 def _encode_reasoning_details(value: list[dict[str, Any]]) -> str:
@@ -265,6 +266,7 @@ class OpenRouterAdapter:
         completion_price_per_token: float,
         app_url: str,
         reasoning_parameter: dict[str, object] | None = None,
+        provider_routing: dict[str, object] | None = None,
         tool_choice: Literal["auto", "required"] = "auto",
         endpoint: str = OPENROUTER_ENDPOINT,
         request_headers: dict[str, str] | None = None,
@@ -279,6 +281,7 @@ class OpenRouterAdapter:
         self.completion_price_per_token = completion_price_per_token
         self.app_url = app_url
         self.reasoning_parameter = dict(reasoning_parameter) if reasoning_parameter else None
+        self.provider_routing = dict(provider_routing) if provider_routing else None
         self.tool_choice = tool_choice
         self.endpoint = endpoint
         self.request_headers = dict(request_headers) if request_headers else {
@@ -335,6 +338,8 @@ class OpenRouterAdapter:
             payload.pop("tool_choice")
         if self.reasoning_parameter:
             payload["reasoning"] = self.reasoning_parameter
+        if self.provider_routing:
+            payload["provider"] = self.provider_routing
         estimated_input = _estimate_payload_tokens(payload)
         available_output = model.contextWindow - estimated_input
         if available_output < 1:
@@ -435,6 +440,23 @@ class OpenRouterAdapter:
             message = choice["message"]
             finish_reason = choice.get("finish_reason")
             raw_tool_calls = message.get("tool_calls") or []
+            if len(raw_tool_calls) > MAX_TOOL_CALLS_PER_RESPONSE:
+                tool_name_counts: dict[str, int] = {}
+                for raw_call in raw_tool_calls:
+                    tool_name = str((raw_call.get("function") or {}).get("name") or "unknown")
+                    tool_name_counts[tool_name] = tool_name_counts.get(tool_name, 0) + 1
+                self.session.append(
+                    "provider_tool_batch_truncated",
+                    {
+                        "reservation_key": reservation_key,
+                        "reported_tool_calls": len(raw_tool_calls),
+                        "retained_tool_calls": MAX_TOOL_CALLS_PER_RESPONSE,
+                        "omitted_tool_calls": len(raw_tool_calls) - MAX_TOOL_CALLS_PER_RESPONSE,
+                        "tool_name_counts": tool_name_counts,
+                    },
+                    "private_provider",
+                )
+                raw_tool_calls = raw_tool_calls[:MAX_TOOL_CALLS_PER_RESPONSE]
             output.stopReason = (
                 "toolUse"
                 if raw_tool_calls or finish_reason in {"tool_calls", "function_call"}

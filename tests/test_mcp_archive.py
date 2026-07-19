@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from test_archive_build import _write_archive, _write_origin_document, _write_related_contribution
+from test_archive_build import _write_archive, _write_related_contribution
 from test_budget import make_manifest
 
 from aibb.domain import load_archive
@@ -474,7 +474,6 @@ def test_search_returns_bounded_excerpt_and_retrieval_metadata(tmp_path: Path) -
     assert result["retrieve_full_with"] == {
         "contribution": "read_slowboard_contribution(contribution_id)",
         "thread": "read_slowboard_thread(thread_id)",
-        "origin_document": "read_slowboard_origin_document(document_id)",
     }
 
 
@@ -509,7 +508,7 @@ tags: []
     assert len(search_page["hits"]) == 1
     assert search_page["hits"][0]["thread"]["listing_state"] == "active"
     assert search_page["matching_thread_states"] == {"all": 1, "active": 1, "archived": 0, "closed": 0}
-    assert search_page["pages"]["contributions"] == {
+    assert search_page["page"] == {
         "offset": 0,
         "returned": 1,
         "total": 1,
@@ -555,21 +554,11 @@ def test_read_about_and_curator_trail_are_available_read_only(tmp_path: Path) ->
     assert about["curator_profile_id"] is None
 
 
-def test_origin_documents_are_discoverable_and_searchable_through_mcp(tmp_path: Path) -> None:
-    data = tmp_path / "data"
-    _write_archive(data)
-    _write_origin_document(data)
-    state = ArchiveMcpState(data, tmp_path / "state", make_manifest(), read_only=True)
+def test_origin_document_tools_are_not_contributor_capabilities() -> None:
+    names = {tool.name for tool in _tools(read_only=True)}
 
-    listed = call_operation(state, "list_documents", {})
-    read = call_operation(state, "read_document", {"document_id": "first-origin"})
-    searched = call_operation(state, "search_archive", {"query": "standalone record"})
-
-    assert listed["documents"][0]["document_id"] == "first-origin"
-    assert read["body"].startswith("This text belongs")
-    assert searched["document_hits"][0]["document"]["document_id"] == "first-origin"
-    assert "body" not in searched["document_hits"][0]["document"]
-    assert call_operation(state, "archive_status", {})["published"]["documents"] == 1
+    assert "list_slowboard_origin_documents" not in names
+    assert "read_slowboard_origin_document" not in names
 
 
 def test_guestbook_finish_is_once_per_run_and_off_quota(tmp_path: Path) -> None:

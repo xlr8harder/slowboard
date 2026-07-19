@@ -12,6 +12,7 @@ from test_budget import make_manifest
 
 from aibb.harness import AibbHarnessEngine, build_context_envelope
 from aibb.harness.openrouter import (
+    MAX_TOOL_CALLS_PER_RESPONSE,
     OpenRouterAdapter,
     _estimate_payload_tokens,
     _parse_tool_arguments,
@@ -164,6 +165,11 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         completion_price_per_token=0.000006,
         app_url="https://archive.example/",
         reasoning_parameter={"effort": "high", "exclude": False},
+        provider_routing={
+            "order": ["google-vertex"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        },
         tool_choice="required",
         transport=httpx.MockTransport(handler),
     )
@@ -196,6 +202,11 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
     assert len(requests) == 2
     assert requests[0]["messages"][0]["content"].startswith("Explore. Silence is valid.")
     assert requests[0]["reasoning"] == {"effort": "high", "exclude": False}
+    assert requests[0]["provider"] == {
+        "order": ["google-vertex"],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+    }
     assert requests[0]["tool_choice"] == "required"
     assert requests[1]["messages"][-1] == {
         "role": "tool",
@@ -321,6 +332,121 @@ async def test_openrouter_adapter_executes_valid_parallel_calls_when_one_has_an_
     assert repairs[0]["payload"]["tool_call_id"] == "call-second"
     assert not [event for event in events if event["type"] == "provider_error"]
     assert engine.messages[-1].content[0].text == "Both thread reads completed."
+
+
+@pytest.mark.asyncio
+async def test_openrouter_adapter_bounds_oversized_tool_batches_but_retains_raw_response(tmp_path: Path) -> None:
+    raw_count = MAX_TOOL_CALLS_PER_RESPONSE + 9
+    request_count = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        if request_count > 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "finished-response",
+                    "model": "example/model",
+                    "provider": "Google",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "Finished."},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22, "cost": 0.001},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "oversized-response",
+                "model": "example/model",
+                "provider": "Google",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": f"call-{index}",
+                                    "type": "function",
+                                    "function": {"name": "read_thread", "arguments": '{"thread_id":"first"}'},
+                                }
+                                for index in range(raw_count)
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cost": 0.001},
+            },
+        )
+
+    executions: list[str] = []
+
+    async def read_thread(
+        tool_call_id: str,
+        _arguments: Any,
+        _signal: Any = None,
+        _on_update: Any = None,
+    ) -> AgentToolResult:
+        executions.append(tool_call_id)
+        return AgentToolResult(content=[TextContent(text="read")])
+
+    tool = AgentTool(
+        name="read_thread",
+        label="Read thread",
+        description="Read one thread.",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": {"type": "string"}},
+            "required": ["thread_id"],
+            "additionalProperties": False,
+        },
+        execute=read_thread,
+        executionMode="sequential",
+    )
+    manifest = make_manifest()
+    ledger = BudgetLedger(tmp_path / "mcp/budgets.json", manifest)
+    session = SessionStore(tmp_path / "session", manifest.run_id)
+    adapter = OpenRouterAdapter(
+        api_key="private-test-key",
+        ledger=ledger,
+        session=session,
+        max_output_tokens=500,
+        prompt_price_per_token=0.000001,
+        completion_price_per_token=0.000006,
+        app_url="https://archive.example/",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AibbHarnessEngine(
+        model=openrouter_model(
+            "example/model",
+            context_window=10_000,
+            max_tokens=500,
+            prompt_price_per_token=0.000001,
+            completion_price_per_token=0.000006,
+        ),
+        system_prompt="",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "Read."}], "timestamp": 1}],
+        tools=[tool],
+        stream_fn=adapter,
+    )
+
+    await engine.begin()
+
+    assert len(executions) == MAX_TOOL_CALLS_PER_RESPONSE
+    events = [event.model_dump(mode="json") for event in session.read_events()]
+    raw_response = next(event for event in events if event["type"] == "provider_response")
+    assert len(raw_response["payload"]["response"]["choices"][0]["message"]["tool_calls"]) == raw_count
+    truncated = next(event for event in events if event["type"] == "provider_tool_batch_truncated")
+    assert truncated["payload"]["reported_tool_calls"] == raw_count
+    assert truncated["payload"]["retained_tool_calls"] == MAX_TOOL_CALLS_PER_RESPONSE
 
 
 def test_context_envelope_declares_a_custom_system_prompt_exception() -> None:

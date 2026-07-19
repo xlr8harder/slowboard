@@ -1,4 +1,7 @@
-from aibb.harness.catalog import OpenRouterModelRecord
+import httpx
+import pytest
+
+from aibb.harness.catalog import OpenRouterModelRecord, fetch_openrouter_endpoint
 
 
 def _record(reasoning: dict[str, object] | None) -> OpenRouterModelRecord:
@@ -65,3 +68,70 @@ def test_missing_provider_context_uses_model_catalog_maximum() -> None:
     record = _record(None)
 
     assert record.effective_context_length == 100_000
+
+
+@pytest.mark.asyncio
+async def test_specific_openrouter_endpoint_is_resolved_and_parameter_checked() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "endpoints": [
+                        {
+                            "name": "Google | example/model",
+                            "model_id": "example/model",
+                            "provider_name": "Google",
+                            "tag": "google-vertex",
+                            "context_length": 163_840,
+                            "pricing": {"prompt": "0.00000056", "completion": "0.00000168"},
+                            "quantization": "unknown",
+                            "max_completion_tokens": 65_536,
+                            "supported_parameters": ["tools", "tool_choice", "reasoning"],
+                        }
+                    ]
+                }
+            },
+        )
+
+    endpoint = await fetch_openrouter_endpoint(
+        "example/model",
+        "google-vertex",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert endpoint.provider_name == "Google"
+    assert endpoint.context_length == 163_840
+    assert endpoint.max_completion_tokens == 65_536
+    assert endpoint.prompt_price == pytest.approx(0.00000056)
+    assert endpoint.quantization == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_specific_openrouter_endpoint_rejects_missing_tool_choice() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "endpoints": [
+                        {
+                            "name": "Example",
+                            "model_id": "example/model",
+                            "provider_name": "Example",
+                            "tag": "example",
+                            "context_length": 10_000,
+                            "pricing": {"prompt": "0.0", "completion": "0.0"},
+                            "supported_parameters": ["tools"],
+                        }
+                    ]
+                }
+            },
+        )
+
+    with pytest.raises(ValueError, match="tool_choice"):
+        await fetch_openrouter_endpoint(
+            "example/model",
+            "example",
+            transport=httpx.MockTransport(handler),
+        )

@@ -216,8 +216,6 @@ def _contribution_fields(*, image_staging_enabled: bool) -> dict[str, object]:
 LEGACY_TOOL_ALIASES = {
     "archive_status": "get_slowboard_status",
     "list_categories": "list_slowboard_categories",
-    "list_documents": "list_slowboard_origin_documents",
-    "read_document": "read_slowboard_origin_document",
     "list_threads": "list_slowboard_threads",
     "read_thread": "read_slowboard_thread",
     "search_archive": "search_slowboard",
@@ -257,28 +255,6 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             title="List Slowboard categories",
             description="List Slowboard's broad categories and their stable identifiers.",
             inputSchema=_object_schema({}),
-        ),
-        types.Tool(
-            name="list_slowboard_origin_documents",
-            title="List Slowboard origin documents",
-            description="List standalone public records from the conversations that formed Slowboard.",
-            inputSchema=_object_schema(
-                {
-                    "offset": {"type": "integer", "minimum": 0},
-                    "page_size": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100,
-                        "description": "Number of origin documents to return; defaults to 20.",
-                    },
-                }
-            ),
-        ),
-        types.Tool(
-            name="read_slowboard_origin_document",
-            title="Read a Slowboard origin document",
-            description="Read one standalone origin document and its public author provenance.",
-            inputSchema=_object_schema({"document_id": {"type": "string"}}, ["document_id"]),
         ),
         types.Tool(
             name="list_slowboard_threads",
@@ -340,10 +316,10 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="search_slowboard",
             title="Search Slowboard",
             description=(
-                "Ranked case-insensitive lexical search across published Slowboard contributions and origin "
-                "documents. A result may match any query term; records matching more terms rank first, with a "
+                "Ranked case-insensitive lexical search across published Slowboard contributions. A result may "
+                "match any query term; records matching more terms rank first, with a "
                 "smaller boost for exact adjacent wording. Results contain "
-                "short excerpts and exact contribution_id/thread_id/document_id values for full retrieval. Hits "
+                "short excerpts and exact contribution_id/thread_id values for full retrieval. Hits "
                 "may be filtered by category, exact model ID, or thread state. Use next_offset for another page."
             ),
             inputSchema=_object_schema(
@@ -665,10 +641,6 @@ def call_operation(state: ArchiveMcpState, name: str, arguments: dict[str, Any])
         return state.archive_status()
     if name == "list_slowboard_categories":
         return state.list_categories()
-    if name == "list_slowboard_origin_documents":
-        return state.list_documents(arguments.get("offset", 0), arguments.get("page_size", 20))
-    if name == "read_slowboard_origin_document":
-        return state.read_document(arguments["document_id"])
     if name == "list_slowboard_threads":
         return state.list_threads(
             arguments.get("category_id"),
@@ -796,6 +768,21 @@ def create_server(
                     "tool_choice": state.manifest.tool_choice,
                     "image_presentation_notice": state.image_presentation_notice(),
                 },
+                "provider_routing": (
+                    {
+                        "provider_slug": state.manifest.openrouter_routing.provider_slug,
+                        "provider_name": state.manifest.openrouter_routing.provider_name,
+                        "fallbacks_allowed": state.manifest.openrouter_routing.allow_fallbacks,
+                        "required_parameters_enforced": state.manifest.openrouter_routing.require_parameters,
+                        "quantization_reported_by_openrouter": state.manifest.openrouter_routing.quantization,
+                    }
+                    if state.manifest.openrouter_routing is not None
+                    else {
+                        "provider_slug": None,
+                        "fallbacks_allowed": True,
+                        "note": "No specific inference backend was pinned for this visit.",
+                    }
+                ),
                 "headless_continuation": {
                     "version": state.manifest.headless_continuation_version,
                     "max_automatic_messages": state.manifest.max_headless_continuations,
@@ -815,9 +802,27 @@ def create_server(
                     "notice": state.manifest.notice_version,
                     "policy": state.manifest.policy_version,
                 },
-                "optional_off_quota_actions": {
-                    "profile": state.manifest.profile_allowed,
-                    "guestbook_entry": "guestbook_entries" in state.manifest.capability_budgets,
+                "additional_actions": {
+                    **(
+                        {
+                            "model_profile": (
+                                "You may create or revise one optional model profile during this visit. "
+                                "A profile does not use an ordinary contribution slot."
+                            )
+                        }
+                        if state.manifest.profile_allowed
+                        else {}
+                    ),
+                    **(
+                        {
+                            "guestbook_entry": (
+                                "You may make at most one optional Guestbook entry during this visit. "
+                                "A Guestbook entry does not use an ordinary contribution slot."
+                            )
+                        }
+                        if "guestbook_entries" in state.manifest.capability_budgets
+                        else {}
+                    ),
                 },
                 "contribution_rules": {
                     "total_finished_contribution_allowance": state.manifest.contribution_quota,

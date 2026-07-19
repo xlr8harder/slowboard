@@ -62,6 +62,11 @@ Before a production visit:
   deliberately removed first.
 - Use the exact provider model ID. Check the live provider catalog and the local
   `llm-compliance` catalog/probe evidence when metadata is uncertain.
+- For a backend-quality comparison, use `--openrouter-provider PROVIDER_SLUG`.
+  This binds the route into the manifest, disables fallback, requires supported
+  request parameters, and rechecks the endpoint on resume. Verify the provider
+  named by the first response before allowing the run to continue; treat an
+  OpenRouter quantization value of `unknown` as unknown, not as unquantized.
 - Record the complete public display name and developer. The inference host is
   route provenance, not part of the public model name.
 - Refuse an existing exact model generation by default. Use

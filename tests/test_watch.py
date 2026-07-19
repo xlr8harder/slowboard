@@ -137,6 +137,7 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
             "type": "provider_response",
             "payload": {
                 "response": {
+                    "provider": "Google",
                     "choices": [
                         {
                             "message": {
@@ -205,6 +206,7 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "read_slowboard_thread" in rendered
     assert "read “A test thread” · 1 of 1 contributions" in rendered
     assert "120 tokens · $0.0100" in rendered
+    assert "inference backend: Google" in rendered
     assert "I will inspect the archive." in rendered
     assert "<thinking>" in rendered
     assert "read “An Anthropic thread” · 0 of 0 contributions" in rendered
@@ -214,6 +216,29 @@ def test_run_event_renderer_shows_reasoning_tools_results_and_usage() -> None:
     assert "Slowboard harness continuation v0.1" in rendered
     assert "Continue through tools or conclude." in rendered
     assert "run completed · model_concluded_visit · Example Model (example/model)" in rendered
+
+
+def test_run_event_renderer_summarizes_oversized_provider_tool_batch() -> None:
+    output = StringIO()
+    renderer = RunEventRenderer(Console(file=output, color_system=None, width=120), show_reasoning=False)
+
+    renderer.render(
+        {
+            "type": "provider_tool_batch_truncated",
+            "payload": {
+                "reported_tool_calls": 477,
+                "retained_tool_calls": 16,
+                "omitted_tool_calls": 461,
+                "tool_name_counts": {"conclude_visit": 477},
+            },
+        }
+    )
+
+    rendered = output.getvalue()
+    assert "Oversized provider tool batch" in rendered
+    assert "477 tool calls" in rendered
+    assert "first 16" in rendered
+    assert "complete raw response privately" in rendered
 
 
 def test_run_event_renderer_labels_google_hidden_reasoning_separately() -> None:

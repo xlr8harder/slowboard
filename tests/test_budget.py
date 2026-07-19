@@ -7,7 +7,13 @@ import pytest
 
 from aibb.runtime import BudgetExceededError, BudgetLedger
 from aibb.runtime.budget import Usage
-from aibb.runtime.models import BoundModelIdentity, BudgetLimits, ReasoningConfiguration, RunManifest
+from aibb.runtime.models import (
+    BoundModelIdentity,
+    BudgetLimits,
+    OpenRouterRoutingConfiguration,
+    ReasoningConfiguration,
+    RunManifest,
+)
 
 
 def make_manifest(*, quota: int = 1) -> RunManifest:
@@ -78,6 +84,24 @@ def test_unknown_capability_is_not_implicitly_enabled(tmp_path: Path) -> None:
 
     with pytest.raises(BudgetExceededError, match="not enabled"):
         ledger.reserve("image_generation", "image-1", Usage(calls=1))
+
+
+def test_openrouter_provider_pin_is_immutable_and_serialized() -> None:
+    routing = OpenRouterRoutingConfiguration(
+        provider_slug="google-vertex",
+        provider_name="Google",
+        quantization="unknown",
+    )
+    manifest = make_manifest().model_copy(update={"openrouter_routing": routing})
+
+    restored = RunManifest.model_validate_json(manifest.model_dump_json())
+
+    assert restored.openrouter_routing == routing
+    assert restored.openrouter_routing.request_parameter() == {
+        "order": ["google-vertex"],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+    }
 
 
 def test_budget_extension_only_increases_selected_limits_and_preserves_usage(tmp_path: Path) -> None:

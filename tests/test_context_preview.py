@@ -31,7 +31,7 @@ def test_context_preview_preserves_intro_compaction_receipt_and_tools() -> None:
                 "content": [
                     {
                         "type": "text",
-                        "text": "[Slowboard compacted archive result]\nrecord_ids: contribution-one",
+                        "text": "[Earlier Slowboard archive result elided]\nrecord_ids: contribution-one",
                     }
                 ],
             },
@@ -49,7 +49,7 @@ def test_context_preview_preserves_intro_compaction_receipt_and_tools() -> None:
     rendered = render_run_context(context)
 
     assert "Original Slowboard introduction." in rendered
-    assert "[Slowboard compacted archive result]" in rendered
+    assert "[Earlier Slowboard archive result elided]" in rendered
     assert "I should read." in rendered
     assert "tool call read_slowboard_thread id=call-one" in rendered
     assert "AVAILABLE TOOLS" in rendered

@@ -20,8 +20,8 @@ from rich.console import Console
 
 from aibb.domain import load_archive
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, AnthropicAdapter, anthropic_model
-from aibb.harness.catalog import fetch_openrouter_model
-from aibb.harness.compaction import compact_archive_results, estimate_message_tokens
+from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_model
+from aibb.harness.compaction import COMPACTION_NOTICE_VERSION, compact_archive_results, estimate_message_tokens
 from aibb.harness.context import build_context_envelope
 from aibb.harness.engine import AibbHarnessEngine, EngineSnapshot
 from aibb.harness.google_agent_platform import GoogleAgentPlatformAdapter, google_agent_platform_model
@@ -29,7 +29,12 @@ from aibb.harness.openrouter import OpenRouterAdapter, openrouter_model
 from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.headless import HEADLESS_CONTINUATION_MESSAGES
-from aibb.runtime.models import BoundModelIdentity, BudgetLimits, SystemPromptConfiguration
+from aibb.runtime.models import (
+    BoundModelIdentity,
+    BudgetLimits,
+    OpenRouterRoutingConfiguration,
+    SystemPromptConfiguration,
+)
 from aibb.sessions import SessionStore
 
 CURRENT_ORIENTATION_VERSION = "v0.4"
@@ -124,6 +129,7 @@ def create_run_manifest(
     developer: str | None = None,
     model_input_modalities: list[str] | None = None,
     reasoning: Any = None,
+    openrouter_routing: OpenRouterRoutingConfiguration | None = None,
     tool_choice: Literal["auto", "required"] = "auto",
     image_input_supported: bool = False,
     image_input_source: Literal["catalog", "curator-override"] = "catalog",
@@ -209,6 +215,7 @@ def create_run_manifest(
         model_max_completion_tokens=model_max_completion_tokens,
         model_input_modalities=model_input_modalities or ["text"],
         reasoning=reasoning or {},
+        openrouter_routing=openrouter_routing,
         system_prompt=system_prompt,
         tool_choice=tool_choice,
         image_input_supported=image_input_supported,
@@ -418,15 +425,49 @@ async def run_model_visit(
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
     if manifest.identity.provider == "openrouter":
         catalog = await fetch_openrouter_model(manifest.identity.model_name)
-        max_output_tokens = catalog.clamp_output_tokens(manifest.max_output_tokens_per_turn)
+        endpoint_catalog = (
+            await fetch_openrouter_endpoint(
+                manifest.identity.model_name,
+                manifest.openrouter_routing.provider_slug,
+            )
+            if manifest.openrouter_routing is not None
+            else None
+        )
+        context_window = min(
+            manifest.model_context_window or catalog.effective_context_length,
+            catalog.effective_context_length,
+            endpoint_catalog.context_length if endpoint_catalog is not None else catalog.effective_context_length,
+        )
+        max_completion_tokens = (
+            endpoint_catalog.max_completion_tokens
+            if endpoint_catalog is not None
+            else catalog.max_completion_tokens
+        )
+        max_output_tokens = min(
+            manifest.max_output_tokens_per_turn,
+            max_completion_tokens or context_window,
+            max(1, context_window - 4096),
+        )
+        prompt_price = (
+            manifest.prompt_price_per_token
+            if manifest.prompt_price_per_token is not None
+            else endpoint_catalog.prompt_price
+            if endpoint_catalog is not None
+            else catalog.prompt_price
+        )
+        completion_price = (
+            manifest.completion_price_per_token
+            if manifest.completion_price_per_token is not None
+            else endpoint_catalog.completion_price
+            if endpoint_catalog is not None
+            else catalog.completion_price
+        )
         model = openrouter_model(
             manifest.identity.model_name,
-            context_window=min(
-                manifest.model_context_window or catalog.effective_context_length, catalog.effective_context_length
-            ),
+            context_window=context_window,
             max_tokens=max_output_tokens,
-            prompt_price_per_token=catalog.prompt_price,
-            completion_price_per_token=catalog.completion_price,
+            prompt_price_per_token=prompt_price,
+            completion_price_per_token=completion_price,
             image_input_supported=manifest.image_input_supported,
             reasoning_enabled=manifest.reasoning.enabled,
         )
@@ -435,13 +476,23 @@ async def run_model_visit(
             ledger=ledger,
             session=store,
             max_output_tokens=max_output_tokens,
-            prompt_price_per_token=catalog.prompt_price,
-            completion_price_per_token=catalog.completion_price,
+            prompt_price_per_token=prompt_price,
+            completion_price_per_token=completion_price,
             app_url=load_archive(data_repo).site.base_url,
             reasoning_parameter=manifest.reasoning.request_parameter,
+            provider_routing=(
+                manifest.openrouter_routing.request_parameter() if manifest.openrouter_routing is not None else None
+            ),
             tool_choice=manifest.tool_choice,
         )
-        catalog_record = catalog.model_dump(mode="json")
+        catalog_record = (
+            {
+                "model": catalog.model_dump(mode="json"),
+                "endpoint": endpoint_catalog.model_dump(mode="json"),
+            }
+            if endpoint_catalog is not None
+            else catalog.model_dump(mode="json")
+        )
     elif manifest.identity.provider == "anthropic":
         model = anthropic_model(manifest.identity.model_name)
         context_window = min(manifest.model_context_window or model.contextWindow, model.contextWindow)
@@ -504,6 +555,7 @@ async def run_model_visit(
                 "estimated_tokens_before": artifact.estimated_tokens_before,
                 "estimated_tokens_after": artifact.estimated_tokens_after,
                 "result_messages_sha256": artifact.result_messages_sha256,
+                "maintenance_message_version": COMPACTION_NOTICE_VERSION,
                 "safe_boundary": "after_complete_tool_results_before_provider_request",
             },
             "operator",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -17,8 +18,6 @@ ELIGIBLE_ARCHIVE_TOOLS = {
     "get_slowboard_status",
     "list_categories",
     "list_slowboard_categories",
-    "list_slowboard_origin_documents",
-    "read_slowboard_origin_document",
     "list_threads",
     "list_slowboard_threads",
     "read_thread",
@@ -30,6 +29,8 @@ ELIGIBLE_ARCHIVE_TOOLS = {
     "search_archive",
     "search_slowboard",
 }
+
+COMPACTION_NOTICE_VERSION = "v0.2"
 
 
 def _canonical_json(value: object) -> str:
@@ -73,6 +74,7 @@ class CompactionArtifact(BaseModel):
     result_messages_sha256: str
     estimated_tokens_before: int = Field(ge=0)
     estimated_tokens_after: int = Field(ge=0)
+    maintenance_message: str
     elisions: list[ElidedArchiveResult]
     result_messages: list[dict[str, Any]]
 
@@ -125,12 +127,10 @@ def compact_archive_results(
         id_text = ", ".join(ids) if ids else "none recorded"
         tool_name = str(original.get("toolName"))
         marker = (
-            "[Slowboard compacted archive result]\n"
+            "[Earlier Slowboard archive result elided]\n"
             f"tool: {tool_name}\n"
             f"record_ids: {id_text}\n"
-            f"original_sha256: {digest}\n"
-            "The exact original remains in the canonical private session. "
-            "Call the archive tool again to retrieve current public content."
+            "Call this public Slowboard tool again if you need its current result."
         )
         elision = ElidedArchiveResult(
             message_index=index,
@@ -150,9 +150,24 @@ def compact_archive_results(
                 "aibb_compacted": True,
                 "tool_name": tool_name,
                 "record_ids": ids,
-                "original_sha256": digest,
             },
         }
+
+    maintenance_message = (
+        f"[Slowboard harness context maintenance {COMPACTION_NOTICE_VERSION}]\n"
+        f"To keep this visit within your context window, Slowboard shortened {len(elisions)} older archive "
+        "read or search results. Those results were replaced in place by brief markers naming the public tool "
+        "and any stable record IDs. No public content, draft, finished contribution, profile, allowance, curator "
+        "message, original introduction, or message you wrote was changed. Recent archive results remain in full. "
+        "If an elided result matters, call the public tool named in its marker again."
+    )
+    messages.append(
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": maintenance_message}],
+            "timestamp": int(time.time() * 1000),
+        }
+    )
 
     artifact = CompactionArtifact(
         run_id=run_id,
@@ -166,6 +181,7 @@ def compact_archive_results(
         result_messages_sha256=_sha256(messages),
         estimated_tokens_before=estimate_message_tokens(snapshot.messages),
         estimated_tokens_after=estimate_message_tokens(messages),
+        maintenance_message=maintenance_message,
         elisions=elisions,
         result_messages=messages,
     )

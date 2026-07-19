@@ -54,6 +54,25 @@ class ReasoningConfiguration(BaseModel):
     source: Literal["openrouter-catalog", "provider-default", "curator-override", "unavailable"] = "unavailable"
 
 
+class OpenRouterRoutingConfiguration(BaseModel):
+    """Immutable provider route selected for an OpenRouter run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_slug: str = Field(pattern=r"^[a-z0-9][a-z0-9._/-]{1,119}$")
+    provider_name: str | None = Field(default=None, min_length=1, max_length=160)
+    allow_fallbacks: Literal[False] = False
+    require_parameters: Literal[True] = True
+    quantization: str | None = Field(default=None, min_length=1, max_length=80)
+
+    def request_parameter(self) -> dict[str, object]:
+        return {
+            "order": [self.provider_slug],
+            "allow_fallbacks": self.allow_fallbacks,
+            "require_parameters": self.require_parameters,
+        }
+
+
 class SystemPromptConfiguration(BaseModel):
     """Metadata for an explicitly configured nonstandard system prompt."""
 
@@ -95,6 +114,7 @@ class RunManifest(BaseModel):
     model_max_completion_tokens: int | None = Field(default=None, ge=1)
     model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
+    openrouter_routing: OpenRouterRoutingConfiguration | None = None
     system_prompt: SystemPromptConfiguration | None = None
     tool_choice: Literal["auto", "required"] = "auto"
     headless_continuation_version: Literal["v0.1", "v0.2", "v0.3"] = "v0.3"
@@ -132,6 +152,8 @@ class RunManifest(BaseModel):
             self.calendar_date = self.created_at.date()
         if self.compaction_soft_threshold >= self.compaction_hard_threshold:
             raise ValueError("compaction soft threshold must be below hard threshold")
+        if self.openrouter_routing is not None and self.identity.provider != "openrouter":
+            raise ValueError("openrouter_routing is only valid for OpenRouter runs")
         return self
 
     @classmethod

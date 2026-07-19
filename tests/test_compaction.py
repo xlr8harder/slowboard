@@ -62,9 +62,13 @@ def test_compaction_elides_only_older_archive_reads_and_is_resumable() -> None:
     assert len(artifact.elisions) == 4
     assert artifact.estimated_tokens_after < artifact.estimated_tokens_before
     assert artifact.elisions[0].record_ids == ["thread-0"]
-    assert "Call the archive tool again" in compacted.messages[0]["content"][0]["text"]
+    assert "Call this public Slowboard tool again" in compacted.messages[0]["content"][0]["text"]
+    assert "original_sha256" not in compacted.messages[0]["content"][0]["text"]
     assert compacted.messages[4] == messages[4]
-    assert compacted.messages[-1] == messages[-1]
+    assert compacted.messages[-2] == messages[-1]
+    assert compacted.messages[-1]["role"] == "user"
+    assert "Slowboard harness context maintenance v0.2" in compacted.messages[-1]["content"][0]["text"]
+    assert "original introduction" in artifact.maintenance_message
     assert all(validate_message(message) for message in compacted.messages)
 
 
@@ -170,7 +174,8 @@ async def test_authorized_compaction_can_run_between_tool_result_and_next_provid
         await engine.send_curator_message("Continue.")
 
         assert len(captured_contexts) == 2
-        assert "[Slowboard compacted archive result]" in str(captured_contexts[1]["messages"])
+        assert "[Earlier Slowboard archive result elided]" in str(captured_contexts[1]["messages"])
+        assert "[Slowboard harness context maintenance v0.2]" in str(captured_contexts[1]["messages"])
         assert engine.context_generation == 3
         assert engine.messages[-1].content[0].text == "I continued after the recorded compaction."
     finally:

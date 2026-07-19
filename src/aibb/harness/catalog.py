@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from aibb.runtime.models import ReasoningConfiguration
 
@@ -18,7 +18,7 @@ class OpenRouterModelRecord(BaseModel):
     context_length: int
     pricing: dict[str, object]
     architecture: dict[str, object] = {}
-    supported_parameters: list[str] = []
+    supported_parameters: list[str] = Field(default_factory=list)
     top_provider: dict[str, object] = {}
     reasoning: dict[str, object] | None = None
 
@@ -129,6 +129,58 @@ class OpenRouterImageModelRecord(BaseModel):
     def output_modalities(self) -> set[str]:
         values = self.architecture.get("output_modalities") or []
         return {str(value) for value in values}
+
+
+class OpenRouterEndpointRecord(BaseModel):
+    """One live model endpoint from OpenRouter's provider catalog."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    model_id: str
+    provider_name: str
+    tag: str
+    context_length: int = Field(ge=1)
+    pricing: dict[str, object]
+    quantization: str | None = None
+    max_completion_tokens: int | None = Field(default=None, ge=1)
+    supported_parameters: list[str] = Field(default_factory=list)
+
+    @property
+    def prompt_price(self) -> float:
+        return float(str(self.pricing["prompt"]))
+
+    @property
+    def completion_price(self) -> float:
+        return float(str(self.pricing["completion"]))
+
+
+async def fetch_openrouter_endpoint(
+    model_id: str,
+    provider_slug: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> OpenRouterEndpointRecord:
+    """Resolve and verify a specific provider route before binding a run."""
+
+    async with httpx.AsyncClient(timeout=30, transport=transport) as client:
+        response = await client.get(f"https://openrouter.ai/api/v1/models/{model_id}/endpoints")
+    response.raise_for_status()
+    matches: list[OpenRouterEndpointRecord] = []
+    for item in response.json()["data"]["endpoints"]:
+        record = OpenRouterEndpointRecord.model_validate(item)
+        if record.tag == provider_slug or record.tag.startswith(f"{provider_slug}/"):
+            matches.append(record)
+    if not matches:
+        raise ValueError(f"OpenRouter model {model_id!r} has no endpoint matching provider {provider_slug!r}")
+    endpoint = sorted(matches, key=lambda item: item.tag)[0]
+    missing = {"tools", "tool_choice"} - set(endpoint.supported_parameters)
+    if missing:
+        raise ValueError(
+            f"OpenRouter endpoint {endpoint.tag!r} for {model_id!r} does not advertise required parameters: "
+            + ", ".join(sorted(missing))
+        )
+    return endpoint
 
 
 async def fetch_openrouter_model(model_id: str) -> OpenRouterModelRecord:

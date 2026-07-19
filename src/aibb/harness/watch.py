@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.pretty import Pretty
 from rich.rule import Rule
 
+from aibb.harness.openrouter import MAX_TOOL_CALLS_PER_RESPONSE
 from aibb.runtime import RunManifest
 
 TERMINAL_EVENTS = {"run_completed", "run_suspended", "run_aborted", "run_failed"}
@@ -116,7 +117,7 @@ def _tool_result_summary(name: str, content: str) -> tuple[str, Any | None]:
             None,
         )
     if isinstance(value.get("hits"), list):
-        page = (value.get("pages") or {}).get("contributions") or {}
+        page = value.get("page") or (value.get("pages") or {}).get("contributions") or {}
         return f"returned {page.get('returned', len(value['hits']))} matching contributions", None
     for plural, singular in (("threads", "threads"), ("categories", "categories"), ("documents", "documents")):
         if plural in value and isinstance(value[plural], list):
@@ -178,6 +179,9 @@ class RunEventRenderer:
 
     def _render_provider_response(self, payload: dict[str, Any]) -> None:
         response = payload.get("response") or {}
+        provider_name = response.get("provider")
+        if provider_name:
+            self.console.print(f"[dim]inference backend: {escape(str(provider_name))}[/dim]")
         choices = response.get("choices") or []
         if choices:
             message = choices[0].get("message") or {}
@@ -208,7 +212,8 @@ class RunEventRenderer:
                 Panel(Markdown(visible_content), title=f"Model · {self._model_label()}", border_style="cyan")
             )
         calls: list[tuple[str, str, Any]] = []
-        for call in message.get("tool_calls") or []:
+        raw_tool_calls = message.get("tool_calls") or []
+        for call in raw_tool_calls[:MAX_TOOL_CALLS_PER_RESPONSE]:
             function = call.get("function") or {}
             try:
                 arguments = json.loads(function.get("arguments") or "{}")
@@ -216,7 +221,7 @@ class RunEventRenderer:
                 arguments = {"raw": _shorten(str(function.get("arguments") or ""))}
             calls.append((str(call.get("id") or ""), str(function.get("name") or "tool"), arguments))
         if isinstance(message.get("content"), list):
-            calls.extend(
+            content_calls = [
                 (
                     str(block.get("id") or ""),
                     str(block.get("name") or "tool"),
@@ -224,6 +229,15 @@ class RunEventRenderer:
                 )
                 for block in message["content"]
                 if isinstance(block, dict) and block.get("type") == "toolCall"
+            ]
+            calls.extend(content_calls[: max(0, MAX_TOOL_CALLS_PER_RESPONSE - len(calls))])
+        reported_call_count = len(raw_tool_calls) + len(
+            content_calls if isinstance(message.get("content"), list) else []
+        )
+        if reported_call_count > len(calls):
+            self.console.print(
+                f"[bold red]→ {reported_call_count - len(calls)} additional provider tool calls omitted from "
+                "this rendered view[/bold red]"
             )
         for call_id, name, arguments in calls:
             if call_id:
@@ -304,6 +318,19 @@ class RunEventRenderer:
             )
         elif event_type == "provider_response":
             self._render_provider_response(payload)
+        elif event_type == "provider_tool_batch_truncated":
+            self.console.print(
+                Panel(
+                    (
+                        f"The provider returned {payload.get('reported_tool_calls', '?')} tool calls in one "
+                        f"response. Slowboard retained the first {payload.get('retained_tool_calls', '?')} for "
+                        "controlled execution and preserved the complete raw response privately.\n\n"
+                        f"Counts: {escape(str(payload.get('tool_name_counts') or {}))}"
+                    ),
+                    title="Oversized provider tool batch",
+                    border_style="red",
+                )
+            )
         elif event_type == "provider_error":
             error_type = escape(str(payload.get("type") or "ProviderError"))
             message = escape(_shorten(str(payload.get("message") or "Unknown provider failure"), 2_000))

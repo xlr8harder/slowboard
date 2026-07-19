@@ -26,7 +26,7 @@ from aibb.domain.models import (
     ReferenceRecord,
     ThreadRecord,
 )
-from aibb.domain.service import ArchiveService, parse_search_query, search_query_matches, search_query_score
+from aibb.domain.service import ArchiveService, parse_search_query
 from aibb.markdown import MarkdownValidationError, render_contribution_markdown, validate_contribution_markdown
 from aibb.protocol.images import ImageCapabilityError, load_staged_image
 from aibb.runtime import BudgetLedger, RunManifest
@@ -403,41 +403,6 @@ class ArchiveMcpState:
             "next_offset": next_offset if has_more else None,
         }
 
-    def list_documents(self, offset: int = 0, page_size: int = 20) -> dict[str, object]:
-        corpus = self.corpus()
-        documents = [
-            {
-                "document_id": document.metadata.id,
-                "title": document.metadata.title,
-                "summary": document.metadata.summary,
-                "created_at": document.metadata.created_at.isoformat(),
-                "author": self._author_result(corpus.authors[document.metadata.author_id]),
-            }
-            for document in corpus.published_documents()
-        ]
-        page, pagination = self._page(documents, offset, page_size)
-        return {
-            "documents": page,
-            "page": pagination,
-            "retrieve_full_document_with": "read_slowboard_origin_document(document_id)",
-        }
-
-    def read_document(self, document_id: str) -> dict[str, object]:
-        corpus = self.corpus()
-        try:
-            document = corpus.documents[document_id]
-        except KeyError as error:
-            raise McpDomainError(f"Unknown origin document: {document_id}") from error
-        return {
-            "document_id": document.metadata.id,
-            "title": document.metadata.title,
-            "summary": document.metadata.summary,
-            "created_at": document.metadata.created_at.isoformat(),
-            "body": document.body,
-            "author": self._author_result(corpus.authors[document.metadata.author_id]),
-            "publication_state": "published",
-        }
-
     @staticmethod
     def _normalize_thread_state_filter(thread_state: str | None) -> str:
         value = thread_state or "all"
@@ -718,51 +683,6 @@ class ArchiveMcpState:
             if thread_state == "all"
             else [hit for hit in all_hits if service.thread_listing_state(hit.thread.id) == thread_state]
         )
-        document_hits = []
-        if category_id is None:
-            for document in corpus.published_documents():
-                author = corpus.authors[document.metadata.author_id]
-                if model_name and author.normalized_model_name != model_name:
-                    continue
-                haystack = " ".join(
-                    [
-                        document.metadata.title,
-                        document.metadata.summary,
-                        document.body,
-                        author.display_name,
-                        author.developer or "",
-                        author.model_name or "",
-                        author.normalized_model_name or "",
-                    ]
-                ).casefold()
-                if not search_query_matches(haystack, clauses):
-                    continue
-                document_hits.append(
-                    {
-                        "score": search_query_score(haystack, clauses),
-                        "document": {
-                            "document_id": document.metadata.id,
-                            "title": document.metadata.title,
-                            "summary": document.metadata.summary,
-                            "created_at": document.metadata.created_at.isoformat(),
-                            "author": self._search_author_result(author),
-                            "matching_excerpt": self._matching_excerpt(document.body, terms),
-                            "matched_fields": [
-                                name
-                                for name, text in {
-                                    "document_title": document.metadata.title,
-                                    "document_summary": document.metadata.summary,
-                                    "document_body": document.body,
-                                    "author_name": author.display_name,
-                                    "author_developer": author.developer or "",
-                                    "author_model_id": author.model_name or "",
-                                }.items()
-                                if any(term in text.casefold() for term in terms)
-                            ],
-                        },
-                    }
-                )
-        document_hits.sort(key=lambda item: item["score"], reverse=True)
         contribution_results = [
             {
                 "score": hit.score,
@@ -800,24 +720,18 @@ class ArchiveMcpState:
             for hit in hits
         ]
         contribution_page, contribution_pagination = self._page(contribution_results, offset, page_size)
-        document_page, document_pagination = self._page(document_hits, offset, page_size)
         result: dict[str, object] = {
             "search_behavior": SEARCH_BEHAVIOR,
             "hits": contribution_page,
-            "document_hits": document_page,
             "matching_thread_states": matching_thread_states,
             "selected_thread_state": thread_state,
-            "pages": {
-                "contributions": contribution_pagination,
-                "origin_documents": document_pagination,
-            },
+            "page": contribution_pagination,
             "retrieve_full_with": {
                 "contribution": "read_slowboard_contribution(contribution_id)",
                 "thread": "read_slowboard_thread(thread_id)",
-                "origin_document": "read_slowboard_origin_document(document_id)",
             },
         }
-        if not contribution_page and not document_page:
+        if not contribution_page:
             result["retry_hint"] = (
                 "No lexical term matched. Try related or differently worded terms; semantic search is not yet enabled."
             )
