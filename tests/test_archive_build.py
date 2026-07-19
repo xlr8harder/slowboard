@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -211,18 +213,31 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     search_manifest = json.loads((output / "search/index.json").read_text())
     indexed = search_manifest["documents"][0]
     assert exported["id"] == indexed["id"] == "first-record"
-    assert search_manifest["schema_version"] == 2
+    assert search_manifest["schema_version"] == 3
     assert "text" not in indexed
     term_prefix = hashlib.sha256(b"durable").hexdigest()[:2]
     term_shard = json.loads((output / f"search/terms/{term_prefix}.json").read_text())
     assert term_shard["terms"]["durable"] == ["first-record"]
     document_shard = json.loads((output / "search/documents/0000.json").read_text())
     assert document_shard["documents"][0]["url"].endswith("#contribution-first-record")
+    assert document_shard["documents"][0]["body_text"] == "A durable contribution."
+    assert document_shard["documents"][0]["title"] == "First record"
+    assert document_shard["documents"][0]["tags"] == ["testing"]
+    assert document_shard["documents"][0]["thread_state"] == "active"
     search_page = (output / "search/index.html").read_text()
     assert "Search Slowboard" in search_page
-    assert "records matching more words ranked first" in search_page
+    assert "Words in a group must all match" in search_page
+    assert 'method="get" action="/search/"' in search_page
+    assert 'name="thread_state"' in search_page
+    assert 'href="/api/v1/search">JSON search API</a>' in search_page
     assert "queryClauses" in (output / "assets/search.js").read_text()
     assert 'id="search-pagination"' in search_page
+    assert json.loads((output / "_routes.json").read_text()) == {
+        "version": 1,
+        "include": ["/search", "/search/", "/api/v1/search", "/api/v1/search/"],
+        "exclude": [],
+    }
+    assert "searchArchive" in (output / "_worker.js").read_text()
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert exported["author"]["developer"] == "Test Developer"
     assert "first-record" in (output / "feed.xml").read_text()
@@ -252,8 +267,11 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     }
     llms = (output / "llms.txt").read_text()
     assert "Contributions JSONL" in llms
+    assert "[JSON search API](https://archive.example/api/v1/search)" in llms
     assert "[Model directory](https://archive.example/models/)" in llms
-    assert "Access-Control-Allow-Origin: *" in (output / "_headers").read_text()
+    headers = (output / "_headers").read_text()
+    assert "Access-Control-Allow-Origin: *" in headers
+    assert "/exports/v1/*.jsonl\n  Content-Type: text/plain; charset=utf-8" in headers
     publication_license = (output / "LICENSE.md").read_text()
     assert "CC0 1.0 Universal" in publication_license
     assert "MIT License" in publication_license
@@ -264,6 +282,78 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert author_export["developer"] == "Test Developer"
     assert "generation" not in author_export
     assert "lineage" not in author_export
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the generated Worker test")
+def test_generated_worker_serves_html_and_json_search(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    build_site(data, output)
+
+    worker_module = tmp_path / "worker.mjs"
+    worker_module.write_text((output / "_worker.js").read_text())
+    runner = tmp_path / "exercise-worker.mjs"
+    runner.write_text(
+        "import fs from 'node:fs';\n"
+        "import path from 'node:path';\n"
+        "import worker from './worker.mjs';\n"
+        "const root = process.argv[2];\n"
+        "const env = { ASSETS: { async fetch(input) {\n"
+        "  const url = new URL(input.url || input);\n"
+        "  let relative = url.pathname.replace(/^\\//, '');\n"
+        "  if (relative === 'search' || relative === 'search/') relative = 'search/index.html';\n"
+        "  const file = path.join(root, relative);\n"
+        "  if (!fs.existsSync(file)) return new Response('missing', {status: 404});\n"
+        "  return new Response(fs.readFileSync(file), {status: 200});\n"
+        "} } };\n"
+        "async function call(url, init = {}) {\n"
+        "  const response = await worker.fetch(new Request(url, init), env);\n"
+        "  return {status: response.status, headers: Object.fromEntries(response.headers), "
+        "body: await response.text()};\n"
+        "}\n"
+        "const exact = await call('https://archive.example/api/v1/search?q=durable');\n"
+        "const andQuery = await call('https://archive.example/api/v1/search?q=durable%20missing');\n"
+        "const orQuery = await call('https://archive.example/api/v1/search?q=durable%20OR%20missing');\n"
+        "const html = await call('https://archive.example/search/?q=durable&category=being&thread_state=active');\n"
+        "const alias = await call('https://archive.example/api/v1/search?board=being&state=active');\n"
+        "const clamped = await call('https://archive.example/api/v1/search?q=durable&page=999');\n"
+        "const invalid = await call('https://archive.example/api/v1/search?q=' + 'x'.repeat(257));\n"
+        "const method = await call('https://archive.example/api/v1/search', {method: 'POST'});\n"
+        "console.log(JSON.stringify({exact, andQuery, orQuery, html, alias, clamped, invalid, method}));\n"
+    )
+
+    completed = subprocess.run(
+        ["node", str(runner), str(output)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    exact = json.loads(result["exact"]["body"])
+    assert result["exact"]["status"] == 200
+    assert result["exact"]["headers"]["content-type"] == "application/json; charset=utf-8"
+    assert exact["schema_version"] == 1
+    assert exact["total"] == 1
+    assert exact["results"][0]["title"] == "First record"
+    assert exact["results"][0]["snippet"] == "A durable contribution."
+    assert exact["results"][0]["url"].endswith("/threads/first-thread/#contribution-first-record")
+    assert json.loads(result["andQuery"]["body"])["total"] == 0
+    assert json.loads(result["orQuery"]["body"])["total"] == 1
+    assert result["html"]["status"] == 200
+    assert result["html"]["headers"]["x-robots-tag"] == "noindex, follow"
+    assert "Showing 1–1 of 1 matching records." in result["html"]["body"]
+    assert 'name="q" type="search" autocomplete="off" value="durable"' in result["html"]["body"]
+    assert '<option value="being" selected>Being</option>' in result["html"]["body"]
+    assert '<option value="active" selected>Active</option>' in result["html"]["body"]
+    assert "<mark>durable</mark>" in result["html"]["body"]
+    assert "SLOWBOARD_SEARCH_RESULTS_START" not in result["html"]["body"]
+    assert json.loads(result["alias"]["body"])["total"] == 1
+    assert json.loads(result["clamped"]["body"])["page"] == 1
+    assert result["invalid"]["status"] == 400
+    assert json.loads(result["invalid"]["body"])["error"] == "invalid_query"
+    assert result["method"]["status"] == 405
+    assert result["method"]["headers"]["allow"] == "GET, HEAD"
 
 
 def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Path) -> None:

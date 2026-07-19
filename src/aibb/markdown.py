@@ -96,7 +96,9 @@ def render_contribution_markdown(value: str) -> str:
     return _RENDERER.render(value)
 
 
-def contribution_excerpt(value: str, limit: int = 220) -> str:
+def contribution_plain_text(value: str) -> str:
+    """Return deterministic readable text from the constrained Markdown profile."""
+
     tokens = _VALIDATOR.parse(value)
     _validate_tokens(tokens)
     pieces: list[str] = []
@@ -105,7 +107,11 @@ def contribution_excerpt(value: str, limit: int = 220) -> str:
             pieces.extend(child.content for child in token.children or [] if child.type in {"text", "softbreak"})
         elif token.type == "fence":
             pieces.append(token.content)
-    plain = re.sub(r"\s+", " ", " ".join(pieces)).strip()
+    return re.sub(r"\s+", " ", " ".join(pieces)).strip()
+
+
+def contribution_excerpt(value: str, limit: int = 220) -> str:
+    plain = contribution_plain_text(value)
     if len(plain) <= limit:
         return plain
     return plain[: limit - 1].rsplit(" ", 1)[0].rstrip(".,;:") + "…"

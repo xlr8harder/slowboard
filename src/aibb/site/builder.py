@@ -19,7 +19,7 @@ from markdown_it import MarkdownIt
 from aibb.domain import load_archive
 from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, OriginDocument, ProfileRecord
 from aibb.domain.service import ArchiveService
-from aibb.markdown import contribution_excerpt, render_contribution_markdown
+from aibb.markdown import contribution_excerpt, contribution_plain_text, render_contribution_markdown
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def _canonical_json(value: object) -> str:
 
 
 def _search_terms(value: str) -> set[str]:
-    return set(re.findall(r"\w+", value.casefold()))
+    return set(re.findall(r"\w+", value.lower()))
 
 
 def _slug(value: str) -> str:
@@ -735,17 +735,24 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         thread = corpus.threads[contribution.metadata.thread_id]
         author = corpus.authors[contribution.metadata.author_id]
         category = corpus.categories[thread.category_id]
+        thread_state = service.thread_listing_state(thread.id)
         search_documents.append(
             {
                 "id": contribution.metadata.id,
+                "kind": "contribution",
                 "url": "/" + _contribution_path(corpus, contribution),
                 "thread_id": thread.id,
                 "thread_title": thread.title,
+                "title": contribution.metadata.title or thread.title,
                 "category_id": thread.category_id,
+                "category_title": category.title,
+                "tags": thread.tags,
+                "thread_state": thread_state,
                 "author_id": author.id,
                 "author": author.display_name,
                 "model": _route_independent_model_id(author),
                 "created_at": contribution.metadata.created_at.isoformat(),
+                "body_text": contribution_plain_text(contribution.body),
                 "text": " ".join(
                     [
                         category.title,
@@ -773,11 +780,16 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "url": f"/documents/{metadata.slug}/",
                 "thread_id": "",
                 "thread_title": metadata.title,
+                "title": metadata.title,
                 "category_id": "",
+                "category_title": "Origin documents",
+                "tags": [],
+                "thread_state": "",
                 "author_id": author.id,
                 "author": author.display_name,
                 "model": _route_independent_model_id(author),
                 "created_at": metadata.created_at.isoformat(),
+                "body_text": contribution_plain_text(document.body),
                 "text": " ".join(
                     [
                         metadata.title,
@@ -801,6 +813,8 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "id": document["id"],
                 "category_id": document["category_id"],
                 "model": document["model"],
+                "tags": document["tags"],
+                "thread_state": document["thread_state"],
                 "created_at": document["created_at"],
                 "document_shard": shard,
             }
@@ -825,16 +839,16 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         _write_text(
             root,
             f"search/documents/{shard:04d}.json",
-            _canonical_json({"schema_version": 2, "documents": metadata}) + "\n",
+            _canonical_json({"schema_version": 3, "documents": metadata}) + "\n",
         )
     for prefix, terms in sorted(term_shards.items()):
         _write_text(
             root,
             f"search/terms/{prefix}.json",
-            _canonical_json({"schema_version": 2, "terms": terms}) + "\n",
+            _canonical_json({"schema_version": 3, "terms": terms}) + "\n",
         )
     search_manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "document_count": len(search_documents),
         "document_shard_size": document_shard_size,
         "term_shard_hash": "sha256-prefix-2",
@@ -1008,6 +1022,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         f"- [About]({_absolute(corpus, 'about/')})",
         f"- [Model directory]({_absolute(corpus, 'models/')})",
         f"- [Search]({_absolute(corpus, 'search/')})",
+        f"- [JSON search API]({_absolute(corpus, 'api/v1/search')})",
         f"- [XML sitemap]({_absolute(corpus, 'sitemap.xml')})",
         f"- [Atom feed]({_absolute(corpus, 'feed.xml')})",
         f"- [JSON Feed]({_absolute(corpus, 'feed.json')})",
@@ -1066,7 +1081,26 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "  Access-Control-Allow-Origin: *\n"
         "  X-Content-Type-Options: nosniff\n"
         "  Referrer-Policy: strict-origin-when-cross-origin\n"
-        f"  X-Robots-Tag: {robots_header}\n",
+        f"  X-Robots-Tag: {robots_header}\n\n"
+        "/exports/v1/*.jsonl\n"
+        "  Content-Type: text/plain; charset=utf-8\n",
+    )
+    _write_text(
+        root,
+        "_routes.json",
+        _canonical_json(
+            {
+                "version": 1,
+                "include": ["/search", "/search/", "/api/v1/search", "/api/v1/search/"],
+                "exclude": [],
+            }
+        )
+        + "\n",
+    )
+    _write_text(
+        root,
+        "_worker.js",
+        Path(__file__).with_name("assets").joinpath("search-worker.js").read_text(),
     )
     _write_text(root, "assets/style.css", Path(__file__).with_name("assets").joinpath("style.css").read_text())
     _write_text(root, "assets/search.js", Path(__file__).with_name("assets").joinpath("search.js").read_text())

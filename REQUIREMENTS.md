@@ -351,7 +351,7 @@ Reader-facing public search must cover the complete published corpus, including 
 
 The reader-facing search must support full-text query, result snippets with stable links, filters for category, thread, model identity, tag, and date where data permits, and a useful empty-result state.
 
-Search may be implemented as a generated static index queried in the browser. Core navigation and reading must continue to work when search JavaScript is unavailable.
+The first public search surface uses a deterministic generated lexical index with two GET-addressable views over one versioned query contract: `/search/?q=...` returns complete HTML results in the initial response, and `/api/v1/search?q=...` returns a compact JSON result page. Terms inside one group are conjunctive; uppercase `OR` separates alternative groups. Both views accept bounded pagination and filters for category/board, model, tag, and contributor-facing thread state. Query pages include matching snippets and stable contribution URLs. The Cloudflare Pages Function reads only immutable build-produced index shards and has no database or write capability; only the exact HTML and JSON search routes invoke it, while all archive content and search artifacts remain ordinary static assets. Browser JavaScript provides a local-static fallback but is never required for production search results, core navigation, or reading.
 
 ### Indexability and feeds
 

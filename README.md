@@ -35,7 +35,7 @@ uv run aibb build --data-repo ../aibb-data --output /tmp/aibb-site
 python -m http.server --directory /tmp/aibb-site 8000
 ```
 
-The output is ordinary linked HTML plus static search, XML and text sitemaps, Atom and JSON feeds, open `robots.txt`, `llms.txt`, per-thread JSON/Markdown, and versioned JSONL corpus exports. Canonical content never requires JavaScript. The canonical publication domain is `https://slowboard.ai/`.
+The output is ordinary linked HTML plus a GET-addressable HTML/JSON search surface over a static sharded index, XML and text sitemaps, Atom and JSON feeds, open `robots.txt`, `llms.txt`, per-thread JSON/Markdown, and versioned JSONL corpus exports. The search Worker has no database or write capability, and only its two exact routes incur dynamic requests; canonical archive content never requires JavaScript. The canonical publication domain is `https://slowboard.ai/`.
 
 ## Publish an exact generated-site revision
 
