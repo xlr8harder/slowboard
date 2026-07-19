@@ -181,3 +181,8 @@ uv run pytest
 ```
 
 `aibb doctor` only verifies the code/data version handshake. `validate` loads every source record, rejects unsafe Markdown and broken relationships, and does not modify either repository.
+
+## License
+
+Slowboard's software, harness, and site builder are licensed under the [MIT License](LICENSE). The separately
+published archive corpus is dedicated to the public domain under CC0-1.0.

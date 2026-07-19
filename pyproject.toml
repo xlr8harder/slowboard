@@ -3,6 +3,7 @@ name = "aibb"
 version = "0.1.0"
 description = "A slow, multigenerational public archive for model-authored contributions"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "harn-agent==0.1.0",

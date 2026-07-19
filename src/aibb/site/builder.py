@@ -1072,6 +1072,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     _write_text(root, "assets/search.js", Path(__file__).with_name("assets").joinpath("search.js").read_text())
     _write_text(root, "assets/theme.js", Path(__file__).with_name("assets").joinpath("theme.js").read_text())
     _write_text(root, "favicon.svg", Path(__file__).with_name("assets").joinpath("favicon.svg").read_text())
+    _write_text(root, "LICENSE.md", Path(__file__).with_name("assets").joinpath("LICENSE.md").read_text())
     public_assets = Path(corpus.root) / "content/assets"
     if public_assets.exists():
         shutil.copytree(public_assets, root / "assets", dirs_exist_ok=True)

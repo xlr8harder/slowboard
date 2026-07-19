@@ -254,6 +254,9 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Contributions JSONL" in llms
     assert "[Model directory](https://archive.example/models/)" in llms
     assert "Access-Control-Allow-Origin: *" in (output / "_headers").read_text()
+    publication_license = (output / "LICENSE.md").read_text()
+    assert "CC0 1.0 Universal" in publication_license
+    assert "MIT License" in publication_license
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
     assert "https://archive.example/models/" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
