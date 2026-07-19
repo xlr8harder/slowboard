@@ -172,6 +172,7 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
             "require_parameters": True,
         },
         tool_choice="required",
+        output_token_parameter="max_completion_tokens",
         transport=httpx.MockTransport(handler),
     )
     envelope = build_context_envelope(
@@ -209,6 +210,8 @@ async def test_openrouter_adapter_captures_payload_response_usage_and_tools(tmp_
         "require_parameters": True,
     }
     assert requests[0]["tool_choice"] == "required"
+    assert requests[0]["max_completion_tokens"] == 500
+    assert "max_tokens" not in requests[0]
     assert requests[1]["messages"][-1] == {
         "role": "tool",
         "tool_call_id": "call-status",

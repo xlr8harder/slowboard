@@ -273,6 +273,7 @@ class OpenRouterAdapter:
         reasoning_parameter: dict[str, object] | None = None,
         provider_routing: dict[str, object] | None = None,
         tool_choice: Literal["auto", "required"] = "auto",
+        output_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens",
         endpoint: str = OPENROUTER_ENDPOINT,
         request_headers: dict[str, str] | None = None,
         timeout_seconds: float = 180,
@@ -288,6 +289,7 @@ class OpenRouterAdapter:
         self.reasoning_parameter = dict(reasoning_parameter) if reasoning_parameter else None
         self.provider_routing = dict(provider_routing) if provider_routing else None
         self.tool_choice = tool_choice
+        self.output_token_parameter = output_token_parameter
         self.endpoint = endpoint
         self.request_headers = dict(request_headers) if request_headers else {
             "Authorization": f"Bearer {self._api_key}",
@@ -320,7 +322,7 @@ class OpenRouterAdapter:
             timestamp=int(time.time() * 1000),
         )
         reservation_key = self._next_key()
-        payload = {
+        payload: dict[str, Any] = {
             "model": model.id,
             "messages": _messages(context, image_input_supported="image" in model.input),
             "tools": [
@@ -335,7 +337,7 @@ class OpenRouterAdapter:
                 for tool in (context.tools or [])
             ],
             "tool_choice": self.tool_choice,
-            "max_tokens": min(self.max_output_tokens, model.maxTokens),
+            self.output_token_parameter: min(self.max_output_tokens, model.maxTokens),
             "stream": False,
         }
         if not payload["tools"]:
@@ -359,8 +361,8 @@ class OpenRouterAdapter:
             stream.push(ErrorEvent(reason="error", error=output))
             stream.end()
             return
-        effective_output = min(int(payload["max_tokens"]), available_output)
-        payload["max_tokens"] = effective_output
+        effective_output = min(int(payload[self.output_token_parameter]), available_output)
+        payload[self.output_token_parameter] = effective_output
         self.last_payload = payload
         estimated_input = _estimate_payload_tokens(payload)
         reserved_cost = (

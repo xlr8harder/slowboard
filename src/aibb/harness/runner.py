@@ -505,6 +505,9 @@ async def run_model_visit(
                 manifest.openrouter_routing.request_parameter() if manifest.openrouter_routing is not None else None
             ),
             tool_choice=manifest.tool_choice,
+            output_token_parameter=(
+                endpoint_catalog.output_token_parameter if endpoint_catalog is not None else "max_tokens"
+            ),
         )
         catalog_record = (
             {

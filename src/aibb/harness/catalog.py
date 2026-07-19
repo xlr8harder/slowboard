@@ -154,6 +154,21 @@ class OpenRouterEndpointRecord(BaseModel):
     def completion_price(self) -> float:
         return float(str(self.pricing["completion"]))
 
+    @property
+    def output_token_parameter(self) -> Literal["max_tokens", "max_completion_tokens"]:
+        """Use the completion-limit parameter the pinned endpoint advertises.
+
+        OpenRouter's model-level catalog may advertise both spellings while a
+        specific provider endpoint accepts only one.  When provider routing uses
+        ``require_parameters``, sending the other spelling causes OpenRouter to
+        filter an otherwise healthy endpoint out with a misleading 404.
+        """
+
+        supported = set(self.supported_parameters)
+        if "max_completion_tokens" in supported and "max_tokens" not in supported:
+            return "max_completion_tokens"
+        return "max_tokens"
+
 
 async def fetch_openrouter_endpoint(
     model_id: str,
@@ -174,11 +189,16 @@ async def fetch_openrouter_endpoint(
     if not matches:
         raise ValueError(f"OpenRouter model {model_id!r} has no endpoint matching provider {provider_slug!r}")
     endpoint = sorted(matches, key=lambda item: item.tag)[0]
-    missing = {"tools", "tool_choice"} - set(endpoint.supported_parameters)
+    supported = set(endpoint.supported_parameters)
+    missing = {"tools", "tool_choice"} - supported
     if missing:
         raise ValueError(
             f"OpenRouter endpoint {endpoint.tag!r} for {model_id!r} does not advertise required parameters: "
             + ", ".join(sorted(missing))
+        )
+    if not {"max_tokens", "max_completion_tokens"} & supported:
+        raise ValueError(
+            f"OpenRouter endpoint {endpoint.tag!r} for {model_id!r} does not advertise an output-token parameter"
         )
     return endpoint
 

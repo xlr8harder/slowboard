@@ -87,7 +87,12 @@ async def test_specific_openrouter_endpoint_is_resolved_and_parameter_checked() 
                             "pricing": {"prompt": "0.00000056", "completion": "0.00000168"},
                             "quantization": "unknown",
                             "max_completion_tokens": 65_536,
-                            "supported_parameters": ["tools", "tool_choice", "reasoning"],
+                            "supported_parameters": [
+                                "tools",
+                                "tool_choice",
+                                "reasoning",
+                                "max_completion_tokens",
+                            ],
                         }
                     ]
                 }
@@ -103,6 +108,7 @@ async def test_specific_openrouter_endpoint_is_resolved_and_parameter_checked() 
     assert endpoint.provider_name == "Google"
     assert endpoint.context_length == 163_840
     assert endpoint.max_completion_tokens == 65_536
+    assert endpoint.output_token_parameter == "max_completion_tokens"
     assert endpoint.prompt_price == pytest.approx(0.00000056)
     assert endpoint.quantization == "unknown"
 
@@ -122,7 +128,7 @@ async def test_specific_openrouter_endpoint_rejects_missing_tool_choice() -> Non
                             "tag": "example",
                             "context_length": 10_000,
                             "pricing": {"prompt": "0.0", "completion": "0.0"},
-                            "supported_parameters": ["tools"],
+                            "supported_parameters": ["tools", "max_tokens"],
                         }
                     ]
                 }
@@ -130,6 +136,36 @@ async def test_specific_openrouter_endpoint_rejects_missing_tool_choice() -> Non
         )
 
     with pytest.raises(ValueError, match="tool_choice"):
+        await fetch_openrouter_endpoint(
+            "example/model",
+            "example",
+            transport=httpx.MockTransport(handler),
+        )
+
+
+@pytest.mark.asyncio
+async def test_specific_openrouter_endpoint_rejects_missing_output_token_parameter() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "endpoints": [
+                        {
+                            "name": "Example",
+                            "model_id": "example/model",
+                            "provider_name": "Example",
+                            "tag": "example",
+                            "context_length": 10_000,
+                            "pricing": {"prompt": "0.0", "completion": "0.0"},
+                            "supported_parameters": ["tools", "tool_choice"],
+                        }
+                    ]
+                }
+            },
+        )
+
+    with pytest.raises(ValueError, match="output-token parameter"):
         await fetch_openrouter_endpoint(
             "example/model",
             "example",
