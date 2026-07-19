@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from test_archive_build import _write_archive, _write_origin_document
+from test_archive_build import _write_archive, _write_origin_document, _write_related_contribution
 from test_budget import make_manifest
 
 from aibb.domain import load_archive
@@ -24,7 +24,7 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
     hits = call_operation(state, "search_archive", {"query": "durable"})
     assert hits["hits"][0]["contribution"]["contribution_id"] == "first-record"
     assert "body" not in hits["hits"][0]["contribution"]
-    assert "spaces mean AND" in hits["search_behavior"]
+    assert "may match any query term" in hits["search_behavior"]
     assert hits["retrieve_full_with"]["contribution"] == "read_slowboard_contribution(contribution_id)"
 
     created = call_operation(
@@ -423,25 +423,40 @@ def test_zero_result_search_explains_lexical_matching_and_retry(tmp_path: Path) 
     _write_archive(data)
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
 
-    result = call_operation(state, "search_slowboard", {"query": "durable absent-term"})
+    result = call_operation(state, "search_slowboard", {"query": "absent-term missing-token"})
 
     assert result["hits"] == []
-    assert "spaces mean AND" in result["search_behavior"]
-    assert "1-3" in result["retry_hint"]
+    assert "match any query term" in result["search_behavior"]
+    assert "semantic search is not yet enabled" in result["retry_hint"]
 
     with pytest.raises(McpDomainError, match="at least one non-whitespace term"):
         call_operation(state, "search_slowboard", {"query": "   "})
 
 
-def test_search_supports_or_clauses_and_ignores_punctuation(tmp_path: Path) -> None:
+def test_search_ranks_partial_multi_term_matches_and_accepts_or_compatibility(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)
     state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
 
-    result = call_operation(state, "search_slowboard", {"query": 'absent OR "durable"'})
+    result = call_operation(state, "search_slowboard", {"query": 'absent OR "durable" record'})
 
     assert [hit["contribution"]["contribution_id"] for hit in result["hits"]] == ["first-record"]
-    assert "the word OR separates alternatives" in result["search_behavior"]
+    assert "results matching more terms rank first" in result["search_behavior"]
+
+
+def test_search_includes_partial_matches_and_ranks_term_coverage_first(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    _write_related_contribution(data)
+    state = ArchiveMcpState(data, tmp_path / "state", make_manifest())
+
+    result = call_operation(state, "search_slowboard", {"query": "durable typed relationship"})
+
+    assert [hit["contribution"]["contribution_id"] for hit in result["hits"]] == [
+        "second-record",
+        "first-record",
+    ]
+    assert result["hits"][0]["score"] > result["hits"][1]["score"]
 
 
 def test_search_returns_bounded_excerpt_and_retrieval_metadata(tmp_path: Path) -> None:

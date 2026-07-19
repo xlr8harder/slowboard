@@ -243,6 +243,74 @@ async def test_terminal_turn_stops_after_persisted_tool_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dependent_slowboard_tools_are_not_executed_from_one_speculative_batch() -> None:
+    registration = register_faux_provider({"api": "aibb-ordered-tools-faux", "provider": "aibb-faux"})
+    registration.set_responses(
+        [
+            faux_assistant_message(
+                [
+                    faux_tool_call("start_reply_draft", {"body": "A draft."}, {"id": "draft-call"}),
+                    faux_tool_call("preview_draft", {"draft_id": "guessed-draft"}, {"id": "preview-call"}),
+                    faux_tool_call("conclude_visit", {}, {"id": "conclude-call"}),
+                ],
+                {"stopReason": "toolUse"},
+            ),
+            faux_assistant_message("I will use the returned draft ID next.", {"stopReason": "stop"}),
+        ]
+    )
+    calls: list[str] = []
+    captured_contexts: list[dict[str, Any]] = []
+
+    def tool(name: str, result: str) -> AgentTool:
+        async def execute(
+            _tool_call_id: str,
+            _arguments: Any,
+            _signal: Any = None,
+            _on_update: Any = None,
+        ) -> AgentToolResult:
+            calls.append(name)
+            return AgentToolResult(content=[TextContent(text=result)], details={})
+
+        return AgentTool(
+            name=name,
+            label=name,
+            description=name,
+            parameters={"type": "object", "additionalProperties": True},
+            execute=execute,
+            executionMode="sequential",
+        )
+
+    def recording_stream(model: Any, context: Any, options: Any) -> Any:
+        captured_contexts.append(context.model_dump(mode="json", by_alias=True, exclude_none=True))
+        return stream_simple(model, context, options)
+
+    try:
+        engine = AibbHarnessEngine(
+            model=registration.models[0],
+            system_prompt=SYSTEM_PROMPT,
+            tools=[
+                tool("start_reply_draft", '{"draft_id":"draft-real"}'),
+                tool("preview_draft", "previewed"),
+                tool("conclude_visit", "concluded"),
+            ],
+            stream_fn=recording_stream,
+        )
+        await engine.send_curator_message("Please begin.")
+
+        assert calls == ["start_reply_draft"]
+        tool_results = [
+            message for message in captured_contexts[-1]["messages"] if message["role"] == "toolResult"
+        ]
+        assert len(tool_results) == 3
+        assert tool_results[0]["content"][0]["text"] == '{"draft_id":"draft-real"}'
+        assert "must be called one at a time" in tool_results[1]["content"][0]["text"]
+        assert "must be called one at a time" in tool_results[2]["content"][0]["text"]
+        assert text_from_last_message(engine) == "I will use the returned draft ID next."
+    finally:
+        registration.unregister()
+
+
+@pytest.mark.asyncio
 async def test_automatic_harness_message_has_distinct_visible_provenance() -> None:
     registration = register_faux_provider({"api": "aibb-harness-faux", "provider": "aibb-faux"})
     registration.set_responses([faux_assistant_message("Continuing.", {"stopReason": "stop"})])

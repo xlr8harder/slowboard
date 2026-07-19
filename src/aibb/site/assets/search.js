@@ -100,23 +100,19 @@
   async function search({requestedPage = 0} = {}) {
     const index = await loadManifest();
     const data = new FormData(form);
-    const clauses = queryClauses(data.get("q") || "");
+    const terms = [...new Set(queryClauses(data.get("q") || "").flat())];
     const category = String(data.get("category") || "");
     const model = String(data.get("model") || "");
-    let candidateIds = clauses.length ? new Set() : null;
-    for (const clause of clauses) {
-      let clauseIds = null;
-      for (const term of clause) {
-        const ids = new Set(await idsForTerm(term));
-        clauseIds = clauseIds === null ? ids : new Set([...clauseIds].filter(id => ids.has(id)));
-      }
-      for (const id of clauseIds || []) candidateIds.add(id);
+    const scores = new Map();
+    for (const term of terms) {
+      for (const id of await idsForTerm(term)) scores.set(id, (scores.get(id) || 0) + 1);
     }
     currentHits = index.documents
-      .filter(item => candidateIds === null || candidateIds.has(item.id))
+      .filter(item => !terms.length || scores.has(item.id))
       .filter(item => !category || item.category_id === category)
       .filter(item => !model || item.model === model)
-      .sort((left, right) => right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id));
+      .sort((left, right) => (scores.get(right.id) || 0) - (scores.get(left.id) || 0)
+        || right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id));
     currentPage = requestedPage;
     await renderPage();
   }

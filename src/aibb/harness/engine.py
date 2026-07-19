@@ -8,7 +8,14 @@ from collections.abc import Callable
 from typing import Any
 
 from harn_agent.agent import Agent
-from harn_agent.types import AgentContext, AgentLoopTurnUpdate, AgentMessage, AgentTool
+from harn_agent.types import (
+    AgentContext,
+    AgentLoopTurnUpdate,
+    AgentMessage,
+    AgentTool,
+    BeforeToolCallContext,
+    BeforeToolCallResult,
+)
 from harn_ai.types import Model, TextContent, UserMessage, validate_message
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +45,43 @@ class _SlowboardAgent(Agent):
         config = super()._create_loop_config(skip_initial_steering_poll=skip_initial_steering_poll)
         config.shouldStopAfterTurn = self._slowboard_should_stop_after_turn
         return config
+
+
+ORDERED_SLOWBOARD_TOOLS = frozenset(
+    {
+        "conclude_visit",
+        "draft_model_profile",
+        "finish_draft_for_review",
+        "finish_model_profile_for_review",
+        "generate_image",
+        "import_public_image",
+        "preview_draft",
+        "preview_model_profile",
+        "revise_draft",
+        "start_new_thread_draft",
+        "start_reply_draft",
+    }
+)
+
+ORDERED_TOOL_BATCH_REJECTION = (
+    "This Slowboard tool was not executed. Draft, image-staging, profile, and visit-conclusion tools must be "
+    "called one at a time so that you can inspect each returned ID or confirmation before choosing the next "
+    "operation. Read the preceding tool result, then call this tool again in a new response with the returned "
+    "values. Independent read-only tools may still be called together."
+)
+
+
+def _guard_ordered_tool_batch(context: BeforeToolCallContext, _signal: Any) -> BeforeToolCallResult | None:
+    """Allow only the first stateful/ordered Slowboard operation in one model response."""
+
+    ordered_calls = [
+        block
+        for block in context.assistantMessage.content
+        if block.type == "toolCall" and block.name in ORDERED_SLOWBOARD_TOOLS
+    ]
+    if len(ordered_calls) <= 1 or context.toolCall.id == ordered_calls[0].id:
+        return None
+    return BeforeToolCallResult(block=True, reason=ORDERED_TOOL_BATCH_REJECTION)
 
 
 def _dump_message(message: AgentMessage) -> dict[str, Any]:
@@ -104,6 +148,7 @@ class AibbHarnessEngine:
                 },
                 "streamFn": stream_fn,
                 "toolExecution": "sequential",
+                "beforeToolCall": _guard_ordered_tool_batch,
                 "steeringMode": "one-at-a-time",
                 "followUpMode": "one-at-a-time",
                 "maxRetries": 0,

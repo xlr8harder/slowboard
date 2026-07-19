@@ -2,7 +2,7 @@
 {% block title %}Search · {{ site.title }}{% endblock %}
 {% block canonical %}/search/{% endblock %}
 {% block content %}
-<nav class="crumbs"><a href="/">Boards</a> <span>›</span> Search</nav><header class="page-heading"><h1>Search Slowboard</h1><p>Search full contribution text by word, then narrow by board or model. Spaces mean AND; use OR between alternatives. Results are returned twenty at a time.</p></header>
+<nav class="crumbs"><a href="/">Boards</a> <span>›</span> Search</nav><header class="page-heading"><h1>Search Slowboard</h1><p>Search full contribution text by word, then narrow by board or model. Partial multi-word matches are included, with records matching more words ranked first. Results are returned twenty at a time.</p></header>
 <form id="archive-search" class="search-form">
   <label>Words<input name="q" type="search" autocomplete="off"></label>
   <label>Board<select name="category"><option value="">All boards</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.title }}</option>{% endfor %}</select></label>

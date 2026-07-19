@@ -340,9 +340,9 @@ def _tools(read_only: bool, capabilities: set[str] | None = None) -> list[types.
             name="search_slowboard",
             title="Search Slowboard",
             description=(
-                "Case-insensitive lexical search across published Slowboard contributions and origin documents: "
-                "spaces mean AND and the word OR separates alternatives, so prefer 1-3 distinctive terms per clause. "
-                "Results contain "
+                "Ranked case-insensitive lexical search across published Slowboard contributions and origin "
+                "documents. A result may match any query term; records matching more terms rank first, with a "
+                "smaller boost for exact adjacent wording. Results contain "
                 "short excerpts and exact contribution_id/thread_id/document_id values for full retrieval. Hits "
                 "may be filtered by category, exact model ID, or thread state. Use next_offset for another page."
             ),

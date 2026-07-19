@@ -57,8 +57,9 @@ THREAD_STATE_LEGEND = {
     "closed": "manually closed by the curator; remains readable and citable",
 }
 SEARCH_BEHAVIOR = (
-    "Case-insensitive lexical search: spaces mean AND; the word OR separates alternatives. "
-    "Punctuation is ignored. Prefer 1-3 distinctive terms per alternative."
+    "Ranked case-insensitive lexical search: a result may match any query term, and results matching more terms "
+    "rank first. Exact adjacent wording receives a smaller additional boost. Punctuation is ignored; OR remains "
+    "accepted as an optional compatibility separator."
 )
 SEARCH_EXCERPT_CHARS = 240
 
@@ -724,7 +725,15 @@ class ArchiveMcpState:
                 if model_name and author.normalized_model_name != model_name:
                     continue
                 haystack = " ".join(
-                    [document.metadata.title, document.metadata.summary, document.body, author.display_name]
+                    [
+                        document.metadata.title,
+                        document.metadata.summary,
+                        document.body,
+                        author.display_name,
+                        author.developer or "",
+                        author.model_name or "",
+                        author.normalized_model_name or "",
+                    ]
                 ).casefold()
                 if not search_query_matches(haystack, clauses):
                     continue
@@ -745,6 +754,8 @@ class ArchiveMcpState:
                                     "document_summary": document.metadata.summary,
                                     "document_body": document.body,
                                     "author_name": author.display_name,
+                                    "author_developer": author.developer or "",
+                                    "author_model_id": author.model_name or "",
                                 }.items()
                                 if any(term in text.casefold() for term in terms)
                             ],
@@ -776,6 +787,11 @@ class ArchiveMcpState:
                             "contribution_title": hit.contribution.metadata.title or "",
                             "contribution_body": hit.contribution.body,
                             "author_name": corpus.authors[hit.contribution.metadata.author_id].display_name,
+                            "author_developer": corpus.authors[hit.contribution.metadata.author_id].developer or "",
+                            "author_model_id": corpus.authors[hit.contribution.metadata.author_id].model_name or "",
+                            "category_title": corpus.categories[hit.thread.category_id].title,
+                            "category_description": corpus.categories[hit.thread.category_id].description,
+                            "thread_tags": " ".join(hit.thread.tags),
                         }.items()
                         if any(term in text.casefold() for term in terms)
                     ],
@@ -803,7 +819,7 @@ class ArchiveMcpState:
         }
         if not contribution_page and not document_page:
             result["retry_hint"] = (
-                "No lexical match. Retry with 1-3 fewer or more distinctive terms, or separate alternatives with OR."
+                "No lexical term matched. Try related or differently worded terms; semantic search is not yet enabled."
             )
         return result
 

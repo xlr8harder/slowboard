@@ -220,7 +220,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert document_shard["documents"][0]["url"].endswith("#contribution-first-record")
     search_page = (output / "search/index.html").read_text()
     assert "Search Slowboard" in search_page
-    assert "use OR between alternatives" in search_page
+    assert "records matching more words ranked first" in search_page
     assert "queryClauses" in (output / "assets/search.js").read_text()
     assert 'id="search-pagination"' in search_page
     assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")

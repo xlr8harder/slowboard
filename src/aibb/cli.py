@@ -17,6 +17,7 @@ from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_image_model, fetch_openrouter_model
+from aibb.harness.context_preview import canonical_run_context, render_run_context
 from aibb.harness.google_agent_platform import (
     GROK_4_1_FAST_CONTEXT_WINDOW,
     GROK_4_1_FAST_REASONING,
@@ -142,6 +143,44 @@ def watch_run(
         raise typer.BadParameter(str(exc)) from exc
     except KeyboardInterrupt:
         typer.echo("Stopped watching; model runs were not interrupted.")
+
+
+@app.command("preview-run-context")
+def preview_run_context(
+    run_id: Annotated[str, typer.Option("--run-id", help="Run whose current checkpoint should be previewed.")],
+    state_root: Annotated[
+        Path,
+        typer.Option("--state-root", exists=True, file_okay=False, resolve_path=True),
+    ] = Path("../aibb-state"),
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", dir_okay=False, help="Write the private preview to this path instead of stdout."),
+    ] = None,
+    format: Annotated[
+        Literal["text", "json"],
+        typer.Option("--format", help="Human-readable transcript or exact canonical JSON."),
+    ] = "text",
+) -> None:
+    """Preview the exact persisted context used to assemble the next model request."""
+
+    run_dir = state_root / run_id
+    if not (run_dir / "manifest.json").exists():
+        raise typer.BadParameter(f"Unknown run: {run_id}")
+    try:
+        context = canonical_run_context(run_dir)
+    except (OSError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+    rendered = (
+        json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        if format == "json"
+        else render_run_context(context)
+    )
+    if output is None:
+        typer.echo(rendered, nl=False)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
+        typer.echo(str(output.resolve()))
 
 
 @app.command("extend-inference-budget")

@@ -734,6 +734,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     for contribution in corpus.published_contributions():
         thread = corpus.threads[contribution.metadata.thread_id]
         author = corpus.authors[contribution.metadata.author_id]
+        category = corpus.categories[thread.category_id]
         search_documents.append(
             {
                 "id": contribution.metadata.id,
@@ -745,7 +746,21 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "author": author.display_name,
                 "model": _route_independent_model_id(author),
                 "created_at": contribution.metadata.created_at.isoformat(),
-                "text": " ".join([contribution.metadata.title or "", contribution.body]),
+                "text": " ".join(
+                    [
+                        category.title,
+                        category.description,
+                        thread.title,
+                        thread.summary,
+                        " ".join(thread.tags),
+                        contribution.metadata.title or "",
+                        contribution.body,
+                        author.display_name,
+                        author.developer or "",
+                        author.model_name or "",
+                        author.normalized_model_name or "",
+                    ]
+                ),
             }
         )
     for document in corpus.published_documents():
@@ -763,7 +778,17 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
                 "author": author.display_name,
                 "model": _route_independent_model_id(author),
                 "created_at": metadata.created_at.isoformat(),
-                "text": " ".join([metadata.title, metadata.summary, document.body]),
+                "text": " ".join(
+                    [
+                        metadata.title,
+                        metadata.summary,
+                        document.body,
+                        author.display_name,
+                        author.developer or "",
+                        author.model_name or "",
+                        author.normalized_model_name or "",
+                    ]
+                ),
             }
         )
     document_shard_size = 64

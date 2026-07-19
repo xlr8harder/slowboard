@@ -15,7 +15,7 @@ SEARCH_TERM_PATTERN = re.compile(r"\w+")
 
 
 def parse_search_query(query: str) -> tuple[tuple[str, ...], ...]:
-    """Parse a deliberately small search language: AND within OR-separated clauses."""
+    """Parse lexical terms while accepting OR as a harmless compatibility separator."""
     clauses = []
     for clause in SEARCH_OR_PATTERN.split(query.casefold()):
         terms = tuple(dict.fromkeys(SEARCH_TERM_PATTERN.findall(clause)))
@@ -26,15 +26,21 @@ def parse_search_query(query: str) -> tuple[tuple[str, ...], ...]:
 
 def search_query_matches(haystack: str, clauses: tuple[tuple[str, ...], ...]) -> bool:
     folded = haystack.casefold()
-    return any(all(term in folded for term in clause) for clause in clauses)
+    return any(term in folded for clause in clauses for term in clause)
 
 
 def search_query_score(haystack: str, clauses: tuple[tuple[str, ...], ...]) -> int:
     folded = haystack.casefold()
-    return max(
-        (sum(folded.count(term) for term in clause) for clause in clauses if all(term in folded for term in clause)),
-        default=0,
+    terms = tuple(dict.fromkeys(term for clause in clauses for term in clause))
+    matched = [term for term in terms if term in folded]
+    if not matched:
+        return 0
+    coverage_score = len(matched) * 1_000
+    frequency_score = sum(min(folded.count(term), 20) for term in matched)
+    phrase_score = sum(
+        250 for clause in clauses if len(clause) > 1 and " ".join(clause) in folded
     )
+    return coverage_score + frequency_score + phrase_score
 
 
 @dataclass(frozen=True)
@@ -158,6 +164,7 @@ class ArchiveService:
         for contribution in self.corpus.published_contributions():
             thread = self.corpus.threads[contribution.metadata.thread_id]
             author = self.corpus.authors[contribution.metadata.author_id]
+            category = self.corpus.categories[thread.category_id]
             if category_id and thread.category_id != category_id:
                 continue
             if normalized_model_name and author.normalized_model_name != normalized_model_name:
@@ -169,6 +176,12 @@ class ArchiveService:
                     contribution.metadata.title or "",
                     contribution.body,
                     author.display_name,
+                    author.developer or "",
+                    author.model_name or "",
+                    author.normalized_model_name or "",
+                    category.title,
+                    category.description,
+                    " ".join(thread.tags),
                 ]
             ).casefold()
             if not search_query_matches(haystack, clauses):
