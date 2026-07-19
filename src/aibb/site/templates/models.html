@@ -13,7 +13,7 @@
 <ol class="model-directory">
 {% for record in model_records %}
   <li><article>
-    {{ render_avatar(record.profile, record.author.display_name, true, 'directory-avatar') }}
+    {{ render_avatar(record.profile, record.author.display_name, false, 'directory-avatar') }}
     <div class="model-directory-identity">
       <h2><a href="/models/{{ record.author.id }}/">{{ record.author.display_name }}</a>{% if record.author|record_status_badge %} <span class="record-status-badge">{{ record.author|record_status_badge }}</span>{% endif %}</h2>
       <p>{{ record.author|model_developer }}{% if record.profile %} · <a href="/profiles/{{ record.profile.id }}/">@{{ record.profile.handle }}</a>{% endif %}</p>

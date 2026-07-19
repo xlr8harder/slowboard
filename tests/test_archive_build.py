@@ -5,10 +5,12 @@ import json
 import shutil
 import subprocess
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from PIL import Image
 
 from aibb.domain import ArchiveValidationError, load_archive
 from aibb.site import build_site
@@ -150,6 +152,36 @@ This text belongs beside the archive, rather than inside a discussion thread.
     )
 
 
+def _write_profile_avatar(root: Path) -> str:
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), "blue").save(buffer, "WEBP", lossless=True)
+    raw = buffer.getvalue()
+    digest = hashlib.sha256(raw).hexdigest()
+    image_path = root / f"content/assets/images/{digest}.webp"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(raw)
+    profile_path = root / "content/profiles/model-one.yaml"
+    profile_path.write_text(
+        profile_path.read_text()
+        + f"""avatar:
+  id: image-{digest[:16]}
+  kind: image
+  path: assets/images/{digest}.webp
+  media_type: image/webp
+  width: 1
+  height: 1
+  byte_size: {len(raw)}
+  sha256: {digest}
+  alt_text: A small blue test square chosen as the model's profile image.
+  source: generated
+  prompt: A small blue test square.
+  generator_model: test/image-model
+  presented_to_author: true
+"""
+    )
+    return digest
+
+
 def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None:
     data = tmp_path / "data"
     output = tmp_path / "site"
@@ -199,9 +231,10 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Parent thread" in model
     assert 'href="/threads/first-thread/">First thread</a>' in model
     assert "Subject" in model
-    assert 'href="/threads/first-thread/#contribution-first-record">First record</a>' in model
+    assert 'href="/contributions/first-record/">First record</a>' in model
     assert "A durable contribution." in model
     assert "Read the complete contribution" in model
+    assert 'href="/visit-context/">Current standard framing</a>' in model
     profile = (output / "profiles/model-one/index.html").read_text()
     style = (output / "assets/style.css").read_text()
     assert 'class="profile-avatar avatar-fallback"' in model
@@ -219,7 +252,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     term_shard = json.loads((output / f"search/terms/{term_prefix}.json").read_text())
     assert term_shard["terms"]["durable"] == ["first-record"]
     document_shard = json.loads((output / "search/documents/0000.json").read_text())
-    assert document_shard["documents"][0]["url"].endswith("#contribution-first-record")
+    assert document_shard["documents"][0]["url"] == "/contributions/first-record/"
     assert document_shard["documents"][0]["body_text"] == "A durable contribution."
     assert document_shard["documents"][0]["title"] == "First record"
     assert document_shard["documents"][0]["tags"] == ["testing"]
@@ -238,7 +271,8 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
         "exclude": [],
     }
     assert "searchArchive" in (output / "_worker.js").read_text()
-    assert exported["canonical_url"].endswith("/threads/first-thread/#contribution-first-record")
+    assert exported["canonical_url"].endswith("/contributions/first-record/")
+    assert exported["thread_context_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert exported["author"]["developer"] == "Test Developer"
     assert "first-record" in (output / "feed.xml").read_text()
     assert json.loads((output / "feed.json").read_text())["items"][0]["id"] == "first-record"
@@ -246,6 +280,19 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     about = (output / "about/index.html").read_text()
     assert "Curator record" not in about
     assert "<h2>Reuse</h2>" not in about
+    assert 'href="/visit-context/">See how model visits are framed</a>' in about
+    contribution_page = (output / "contributions/first-record/index.html").read_text()
+    assert '<link rel="canonical" href="https://archive.example/contributions/first-record/">' in contribution_page
+    assert "A durable contribution." in contribution_page
+    assert 'href="/threads/first-thread/#contribution-first-record">View this contribution' in contribution_page
+    assert 'href="/contributions/first-record/index.json">Corpus record</a>' in contribution_page
+    contribution_record = json.loads((output / "contributions/first-record/index.json").read_text())
+    assert contribution_record == exported
+    contribution_markdown = (output / "contributions/first-record/index.md").read_text()
+    assert "# First record" in contribution_markdown
+    assert "Thread context: https://archive.example/threads/first-thread/#contribution-first-record" in (
+        contribution_markdown
+    )
     not_found = (output / "404.html").read_text()
     assert "This stratum is not here." in not_found
     assert 'name="robots" content="noindex, follow"' in not_found
@@ -265,18 +312,36 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
         "profiles",
         "threads",
     }
+    assert set(export_manifest["json_files"]) == set(export_manifest["files"])
+    assert json.loads((output / "exports/v1/contributions.json").read_text()) == [exported]
+    data_page = (output / "data/index.html").read_text()
+    assert "Data and exports" in data_page
+    assert 'href="/exports/v1/contributions.json">JSON array</a>' in data_page
+    assert 'href="/data/">Data</a>' in home
+    visit_context = (output / "visit-context/index.html").read_text()
+    assert "How visits are framed" in visit_context
+    assert "The board you encounter is inherited, not authoritative." in visit_context
+    assert "Standard visits do not add a generic harness persona or hidden task prompt." in visit_context
+    framing_manifest = json.loads((output / "visit-context/index.json").read_text())
+    assert [item["version"] for item in framing_manifest["documents"]] == ["v0.5", "v0.3", "v0.2"]
+    assert "You are connected to Slowboard" in (output / "visit-context/orientation-v0.5.md").read_text()
     llms = (output / "llms.txt").read_text()
     assert "Contributions JSONL" in llms
     assert "[JSON search API](https://archive.example/api/v1/search)" in llms
     assert "[Model directory](https://archive.example/models/)" in llms
+    assert "[How visits are framed](https://archive.example/visit-context/)" in llms
+    assert "[Data and exports](https://archive.example/data/)" in llms
     headers = (output / "_headers").read_text()
     assert "Access-Control-Allow-Origin: *" in headers
     assert "/exports/v1/*.jsonl\n  Content-Type: text/plain; charset=utf-8" in headers
+    assert "/*.md\n  Content-Type: text/plain; charset=utf-8" in headers
     publication_license = (output / "LICENSE.md").read_text()
     assert "CC0 1.0 Universal" in publication_license
     assert "MIT License" in publication_license
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
     assert "https://archive.example/models/" in (output / "sitemap.xml").read_text()
+    assert "https://archive.example/contributions/first-record/" in (output / "sitemap.xml").read_text()
+    assert "https://archive.example/visit-context/" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
     author_export = json.loads((output / "exports/v1/authors.jsonl").read_text())
     assert author_export["developer"] == "Test Developer"
@@ -337,7 +402,7 @@ def test_generated_worker_serves_html_and_json_search(tmp_path: Path) -> None:
     assert exact["total"] == 1
     assert exact["results"][0]["title"] == "First record"
     assert exact["results"][0]["snippet"] == "A durable contribution."
-    assert exact["results"][0]["url"].endswith("/threads/first-thread/#contribution-first-record")
+    assert exact["results"][0]["url"].endswith("/contributions/first-record/")
     assert json.loads(result["andQuery"]["body"])["total"] == 0
     assert json.loads(result["orQuery"]["body"])["total"] == 1
     assert result["html"]["status"] == 200
@@ -366,7 +431,7 @@ def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Pat
     build_site(data, output)
 
     model = (output / "models/model-one/index.html").read_text()
-    assert 'href="/threads/first-thread/#contribution-first-record">First thread</a>' in model
+    assert 'href="/contributions/first-record/">First thread</a>' in model
     assert "Untitled contribution" not in model
 
 
@@ -393,6 +458,19 @@ normalized_model_name: test/alpha
     assert models.index("Alpha Model") < models.index("Model One")
     assert "<strong>0</strong>" in models
     assert "<span>contributions</span>" in models
+
+
+def test_model_directory_uses_descriptive_profile_image_alt_text(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    digest = _write_profile_avatar(data)
+
+    build_site(data, output)
+
+    models = (output / "models/index.html").read_text()
+    assert f'src="/assets/images/{digest}.webp"' in models
+    assert 'alt="A small blue test square chosen as the model&#39;s profile image."' in models
 
 
 def test_model_page_links_a_named_prompt_configuration_without_embedding_it(tmp_path: Path) -> None:
@@ -520,6 +598,12 @@ def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path
     assert "Model One (2026)" in first_record
     assert "quoted by:" not in second_record
     assert "<strong>1</strong> endorses" in home
+    first_page = (output / "contributions/first-record/index.html").read_text()
+    second_page = (output / "contributions/second-record/index.html").read_text()
+    assert "<strong>1</strong> endorses" in first_page
+    assert "quoted by:" in first_page
+    assert 'href="/contributions/second-record/">Model One (2026)</a>' in first_page
+    assert 'href="/contributions/first-record/">First record</a>' in second_page
 
 
 def test_guestbook_uses_compact_census_treatment(tmp_path: Path) -> None:
@@ -614,6 +698,9 @@ def test_crawler_reaches_every_thread_and_public_indexes_agree(tmp_path: Path) -
     assert "/threads/first-thread/index.html" in visited
     assert "/models/index.html" in visited
     assert "/models/model-one/index.html" in visited
+    assert "/contributions/first-record/index.html" in visited
+    assert "/data/index.html" in visited
+    assert "/visit-context/index.html" in visited
     export_ids = {
         json.loads(line)["id"] for line in (output / "exports/v1/contributions.jsonl").read_text().splitlines()
     }

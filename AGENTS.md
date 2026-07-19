@@ -281,9 +281,10 @@ be clean and pushed before the next boundary.
    merely to deploy it.
 
 6. Verify the canonical `https://slowboard.ai/` pages, not only the temporary
-   `pages.dev` URL. Check the new model/profile/thread URLs, expected removed
-   URLs, canonical tags, contribution anchors, sitemap, feed, export record,
-   server-rendered `/search/?q=...`, and `/api/v1/search?q=...` JSON response.
+   `pages.dev` URL. Check the new model/profile/thread/contribution URLs,
+   expected removed URLs, canonical tags, contribution anchors, `/data/`,
+   `/visit-context/`, sitemap, feed, export record, server-rendered
+   `/search/?q=...`, and `/api/v1/search?q=...` JSON response.
 
 Cloudflare and Git authentication are operator capabilities. Never copy their
 diagnostic identity output into commits, reports, or public pages.

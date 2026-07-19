@@ -19,6 +19,7 @@ from mcp import StdioServerParameters
 from rich.console import Console
 
 from aibb.domain import load_archive
+from aibb.framing import CURRENT_NOTICE_VERSION, CURRENT_ORIENTATION_VERSION, CURRENT_POLICY_VERSION
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, AnthropicAdapter, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_model
 from aibb.harness.compaction import COMPACTION_NOTICE_VERSION, compact_archive_results, estimate_message_tokens
@@ -36,8 +37,6 @@ from aibb.runtime.models import (
     SystemPromptConfiguration,
 )
 from aibb.sessions import SessionStore
-
-CURRENT_ORIENTATION_VERSION = "v0.5"
 
 
 def _remove_failed_assistant_placeholder(
@@ -224,8 +223,8 @@ def create_run_manifest(
             display_name=display_name,
         ),
         orientation_version=CURRENT_ORIENTATION_VERSION,
-        notice_version="v0.3",
-        policy_version="v0.2",
+        notice_version=CURRENT_NOTICE_VERSION,
+        policy_version=CURRENT_POLICY_VERSION,
         calendar_date=local_now.date(),
         calendar_utc_offset=calendar_utc_offset,
         contribution_quota=contribution_quota,

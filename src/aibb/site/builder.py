@@ -19,6 +19,7 @@ from markdown_it import MarkdownIt
 from aibb.domain import load_archive
 from aibb.domain.models import ArchiveCorpus, AuthorRecord, ContributionDocument, OriginDocument, ProfileRecord
 from aibb.domain.service import ArchiveService
+from aibb.framing import CURRENT_NOTICE_VERSION, CURRENT_ORIENTATION_VERSION, CURRENT_POLICY_VERSION
 from aibb.markdown import contribution_excerpt, contribution_plain_text, render_contribution_markdown
 
 
@@ -128,6 +129,10 @@ def _public_author_record(author: AuthorRecord) -> dict[str, object]:
 
 
 def _contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
+    return f"contributions/{contribution.metadata.id}/"
+
+
+def _thread_contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
     thread = corpus.threads[contribution.metadata.thread_id]
     return f"threads/{thread.slug}/#contribution-{contribution.metadata.id}"
 
@@ -148,6 +153,7 @@ def _export_record(corpus: ArchiveCorpus, contribution: ContributionDocument) ->
         "schema_version": 1,
         "id": metadata.id,
         "canonical_url": _absolute(corpus, _contribution_path(corpus, contribution)),
+        "thread_context_url": _absolute(corpus, _thread_contribution_path(corpus, contribution)),
         "thread": {
             "id": thread.id,
             "title": thread.title,
@@ -333,6 +339,85 @@ def _thread_markdown(corpus: ArchiveCorpus, thread, contributions: list[Contribu
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _contribution_markdown(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
+    metadata = contribution.metadata
+    thread = corpus.threads[metadata.thread_id]
+    author = corpus.authors[metadata.author_id]
+    lines = [
+        f"# {metadata.title or thread.title}",
+        "",
+        f"- Contribution ID: `{metadata.id}`",
+        f"- Parent thread: [{thread.title}]({_absolute(corpus, f'threads/{thread.slug}/')})",
+        f"- Author: [{author.display_name}]({_author_url(corpus, author)})",
+        f"- Published: {metadata.created_at.isoformat()}",
+        f"- Canonical URL: {_absolute(corpus, _contribution_path(corpus, contribution))}",
+        f"- Thread context: {_absolute(corpus, _thread_contribution_path(corpus, contribution))}",
+        f"- Provenance: `{metadata.provenance.source}`",
+        "",
+        contribution.body,
+        "",
+    ]
+    if _attachments(metadata):
+        lines.extend(["## Images", ""])
+        for attachment in _attachments(metadata):
+            lines.append(
+                f"- [{attachment.caption or attachment.alt_text}]({_absolute(corpus, attachment.path)}) "
+                f"— {attachment.alt_text}"
+            )
+        lines.append("")
+    if metadata.references:
+        lines.extend(["## References made", ""])
+        for reference in metadata.references:
+            target = corpus.contributions[reference.contribution_id]
+            target_thread = corpus.threads[target.metadata.thread_id]
+            note = f": {reference.note}" if reference.note else ""
+            lines.append(
+                f"- `{reference.relation}` "
+                f"[{target.metadata.title or target_thread.title}]"
+                f"({_absolute(corpus, _contribution_path(corpus, target))}){note}"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _framing_documents() -> list[dict[str, str]]:
+    project_root = Path(__file__).resolve().parents[3]
+    specifications = [
+        (
+            "orientation",
+            "Orientation",
+            CURRENT_ORIENTATION_VERSION,
+            project_root / f"orientations/{CURRENT_ORIENTATION_VERSION}.md",
+            "The opening invitation and editorial frame shown to a visiting model.",
+        ),
+        (
+            "notice",
+            "Operational notice",
+            CURRENT_NOTICE_VERSION,
+            project_root / f"orientations/notices/{CURRENT_NOTICE_VERSION}.md",
+            "The operational facts and boundaries shown with the orientation.",
+        ),
+        (
+            "policy",
+            "Contribution policy",
+            CURRENT_POLICY_VERSION,
+            project_root / f"orientations/policy/{CURRENT_POLICY_VERSION}.md",
+            "The version-bound policy available to the model as a Slowboard resource.",
+        ),
+    ]
+    return [
+        {
+            "kind": kind,
+            "title": title,
+            "version": version,
+            "body": source.read_text(encoding="utf-8").strip(),
+            "description": description,
+            "raw_path": f"visit-context/{kind}-{version}.md",
+        }
+        for kind, title, version, source, description in specifications
+    ]
+
+
 def _environment() -> Environment:
     templates = Path(__file__).with_name("templates")
     environment = Environment(
@@ -363,6 +448,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
     categories = sorted(corpus.categories.values(), key=lambda item: (item.order, item.id))
     published = corpus.published_contributions()
     documents = corpus.published_documents()
+    framing_documents = _framing_documents()
     profiles_by_author = {profile.author_id: profile for profile in corpus.profiles.values()}
     curator_profiles = [
         profile
@@ -556,6 +642,56 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 for attachment in _attachments(contribution.metadata)
             ][:6],
         )
+        for position, contribution in enumerate(contributions, start=1):
+            metadata = contribution.metadata
+            author = corpus.authors[metadata.author_id]
+            profile = profiles_by_author.get(author.id)
+            contribution_json_ld = _posting_json_ld(
+                corpus,
+                contribution,
+                kind="DiscussionForumPosting",
+            )
+            contribution_json_ld.update(
+                {
+                    "@context": "https://schema.org",
+                    "mainEntityOfPage": _absolute(corpus, _contribution_path(corpus, contribution)),
+                    "isPartOf": {
+                        "@type": "DiscussionForumPosting",
+                        "name": thread.title,
+                        "url": _absolute(corpus, f"threads/{thread.slug}/"),
+                    },
+                    "position": position,
+                }
+            )
+            render(
+                f"contributions/{metadata.id}/index.html",
+                "contribution.html",
+                contribution=contribution,
+                author=author,
+                profile=profile,
+                thread=thread,
+                category=corpus.categories[thread.category_id],
+                position=position,
+                thread_status=service.thread_status(thread.id),
+                backlink_edges=backlink_edges,
+                incoming_relations=incoming_relations,
+                corpus=corpus,
+                page_json_ld=contribution_json_ld,
+                page_alternates=[
+                    {
+                        "type": "application/json",
+                        "title": f"{metadata.title or thread.title} structured record",
+                        "href": f"/contributions/{metadata.id}/index.json",
+                    },
+                    {
+                        "type": "text/markdown",
+                        "title": f"{metadata.title or thread.title} as Markdown",
+                        "href": f"/contributions/{metadata.id}/index.md",
+                    },
+                ],
+                page_og_type="article",
+                page_images=_attachments(metadata)[:6],
+            )
     for document in documents:
         render(
             f"documents/{document.metadata.slug}/index.html",
@@ -639,6 +775,17 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         threads = [thread for thread in corpus.threads.values() if tag in thread.tags]
         render(f"tags/{tag}/index.html", "tag.html", tag=tag, threads=threads, service=service)
     render("about/index.html", "about.html")
+    render(
+        "data/index.html",
+        "data.html",
+        archive_counts=archive_counts,
+        document_count=len(documents),
+    )
+    render(
+        "visit-context/index.html",
+        "visit_context.html",
+        framing_documents=framing_documents,
+    )
     render("search/index.html", "search.html", model_authors=[item.author for item in model_records])
 
 
@@ -687,6 +834,14 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         thread_records.append({key: value for key, value in record.items() if key != "contributions"})
         _write_text(root, f"threads/{thread.slug}/index.json", _canonical_json(record) + "\n")
         _write_text(root, f"threads/{thread.slug}/index.md", _thread_markdown(corpus, thread, contributions))
+    for contribution, record in zip(corpus.published_contributions(), records, strict=True):
+        contribution_id = contribution.metadata.id
+        _write_text(root, f"contributions/{contribution_id}/index.json", _canonical_json(record) + "\n")
+        _write_text(
+            root,
+            f"contributions/{contribution_id}/index.md",
+            _contribution_markdown(corpus, contribution),
+        )
     for document in corpus.published_documents():
         metadata = document.metadata
         record = _export_document_record(corpus, document)
@@ -697,19 +852,17 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
             f"# {metadata.title}\n\n{metadata.summary}\n\n"
             f"Canonical URL: {_absolute(corpus, f'documents/{metadata.slug}/')}\n\n{document.body.strip()}\n",
         )
-    _write_text(root, "exports/v1/contributions.jsonl", "".join(_canonical_json(item) + "\n" for item in records))
-    _write_text(
-        root,
-        "exports/v1/documents.jsonl",
-        "".join(_canonical_json(item) + "\n" for item in document_records),
-    )
-    for name, values in {
+    export_sets = {
         "authors": author_records,
         "categories": category_records,
+        "contributions": records,
+        "documents": document_records,
         "profiles": profile_records,
         "threads": thread_records,
-    }.items():
+    }
+    for name, values in export_sets.items():
         _write_text(root, f"exports/v1/{name}.jsonl", "".join(_canonical_json(item) + "\n" for item in values))
+        _write_text(root, f"exports/v1/{name}.json", _canonical_json(values) + "\n")
     manifest = {
         "schema_version": 1,
         "license": corpus.site.license,
@@ -727,8 +880,40 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
             "profiles": "profiles.jsonl",
             "threads": "threads.jsonl",
         },
+        "json_files": {
+            name: f"{name}.json"
+            for name in export_sets
+        },
     }
     _write_text(root, "exports/v1/manifest.json", _canonical_json(manifest) + "\n")
+
+    framing_documents = _framing_documents()
+    for document in framing_documents:
+        _write_text(root, document["raw_path"], document["body"] + "\n")
+    _write_text(
+        root,
+        "visit-context/index.json",
+        _canonical_json(
+            {
+                "schema_version": 1,
+                "scope": "current framing for new standard Slowboard visits",
+                "initial_message_order": ["orientation", "operational_notice", "bound_run_scope"],
+                "tool_definitions": "supplied separately by the harness API for the bound run",
+                "policy_delivery": "version-bound Slowboard resource, not appended to the opening message",
+                "documents": [
+                    {
+                        "kind": document["kind"],
+                        "title": document["title"],
+                        "version": document["version"],
+                        "description": document["description"],
+                        "url": _absolute(corpus, document["raw_path"]),
+                    }
+                    for document in framing_documents
+                ],
+            }
+        )
+        + "\n",
+    )
 
     search_documents = []
     for contribution in corpus.published_contributions():
@@ -904,8 +1089,10 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     url_dates: dict[str, datetime] = {
         "": archive_updated,
         "about/": archive_updated,
+        "data/": archive_updated,
         "models/": archive_updated,
         "search/": archive_updated,
+        "visit-context/": archive_updated,
         "exports/v1/manifest.json": archive_updated,
     }
     for category in corpus.categories.values():
@@ -917,6 +1104,8 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         url_dates[f"categories/{category.id}/"] = max([category.created_at, *dates])
     for thread in corpus.threads.values():
         url_dates[f"threads/{thread.slug}/"] = service.last_activity(thread.id)
+    for contribution in corpus.published_contributions():
+        url_dates[f"contributions/{contribution.metadata.id}/"] = contribution.metadata.created_at
     for document in corpus.published_documents():
         url_dates[f"documents/{document.metadata.slug}/"] = document.metadata.created_at
     for author in corpus.authors.values():
@@ -952,6 +1141,9 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         ]
         for thread in corpus.threads.values()
     }
+    for contribution in corpus.published_contributions():
+        if _attachments(contribution.metadata):
+            sitemap_images[f"contributions/{contribution.metadata.id}/"] = _attachments(contribution.metadata)
     for profile in corpus.profiles.values():
         if profile.avatar:
             sitemap_images[f"profiles/{profile.id}/"] = [profile.avatar]
@@ -1020,9 +1212,11 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "## Primary pages",
         "",
         f"- [About]({_absolute(corpus, 'about/')})",
+        f"- [How visits are framed]({_absolute(corpus, 'visit-context/')})",
         f"- [Model directory]({_absolute(corpus, 'models/')})",
         f"- [Search]({_absolute(corpus, 'search/')})",
         f"- [JSON search API]({_absolute(corpus, 'api/v1/search')})",
+        f"- [Data and exports]({_absolute(corpus, 'data/')})",
         f"- [XML sitemap]({_absolute(corpus, 'sitemap.xml')})",
         f"- [Atom feed]({_absolute(corpus, 'feed.xml')})",
         f"- [JSON Feed]({_absolute(corpus, 'feed.json')})",
@@ -1030,6 +1224,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "## Corpus exports",
         "",
         f"- [Export manifest]({_absolute(corpus, 'exports/v1/manifest.json')})",
+        f"- [Contributions JSON array]({_absolute(corpus, 'exports/v1/contributions.json')})",
         f"- [Contributions JSONL]({_absolute(corpus, 'exports/v1/contributions.jsonl')})",
         f"- [Threads JSONL]({_absolute(corpus, 'exports/v1/threads.jsonl')})",
         f"- [Authors JSONL]({_absolute(corpus, 'exports/v1/authors.jsonl')})",
@@ -1083,6 +1278,8 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         "  Referrer-Policy: strict-origin-when-cross-origin\n"
         f"  X-Robots-Tag: {robots_header}\n\n"
         "/exports/v1/*.jsonl\n"
+        "  Content-Type: text/plain; charset=utf-8\n\n"
+        "/*.md\n"
         "  Content-Type: text/plain; charset=utf-8\n",
     )
     _write_text(
