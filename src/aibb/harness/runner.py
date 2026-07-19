@@ -40,7 +40,11 @@ from aibb.sessions import SessionStore
 CURRENT_ORIENTATION_VERSION = "v0.4"
 
 
-def _remove_failed_assistant_placeholder(snapshot: EngineSnapshot) -> tuple[EngineSnapshot, bool]:
+def _remove_failed_assistant_placeholder(
+    snapshot: EngineSnapshot,
+    *,
+    allow_unexecuted_tool_calls: bool = False,
+) -> tuple[EngineSnapshot, bool]:
     """Restore the input boundary after a provider response failed before any tool could execute."""
     if not snapshot.messages:
         return snapshot, False
@@ -50,12 +54,27 @@ def _remove_failed_assistant_placeholder(snapshot: EngineSnapshot) -> tuple[Engi
     retryable = (
         last.get("role") == "assistant"
         and last.get("stopReason") == "error"
-        and not contains_tool_call
+        and (not contains_tool_call or allow_unexecuted_tool_calls)
         and bool(last.get("errorMessage"))
     )
     if not retryable:
         return snapshot, False
     return snapshot.model_copy(update={"messages": snapshot.messages[:-1]}), True
+
+
+def _tool_execution_started_after_latest_provider_response(events: list[Any]) -> bool | None:
+    """Audit whether the failed provider response crossed into tool execution."""
+
+    latest_provider_response = next(
+        (index for index in range(len(events) - 1, -1, -1) if events[index].type == "provider_response"),
+        None,
+    )
+    if latest_provider_response is None:
+        return None
+    return any(
+        event.type == "agent_event" and event.payload.get("type") == "tool_execution_start"
+        for event in events[latest_provider_response + 1 :]
+    )
 
 
 def _slug(value: str, limit: int = 70) -> str:
@@ -621,7 +640,13 @@ async def run_model_visit(
             checkpoint = store.read_checkpoint(
                 allowed_trailing_event_types={"run_resumed", "context_only_begin", "provider_retry_prepared"}
             )
-            restored, retrying_provider_error = _remove_failed_assistant_placeholder(checkpoint.engine)
+            execution_started = _tool_execution_started_after_latest_provider_response(
+                store.read_events()[: checkpoint.event_sequence]
+            )
+            restored, retrying_provider_error = _remove_failed_assistant_placeholder(
+                checkpoint.engine,
+                allow_unexecuted_tool_calls=execution_started is False,
+            )
             if restored.model["id"] != manifest.identity.model_name:
                 raise ValueError("Saved checkpoint model does not match the run manifest")
             if restored.system_prompt != system_prompt:

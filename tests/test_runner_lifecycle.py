@@ -17,6 +17,7 @@ from aibb.harness.runner import (
     _load_system_prompt,
     _provider_error_at_boundary,
     _remove_failed_assistant_placeholder,
+    _tool_execution_started_after_latest_provider_response,
     _turn_boundary_outcome,
     create_run_manifest,
 )
@@ -172,6 +173,54 @@ def test_failed_assistant_with_materialized_tool_call_is_not_retried_as_unchange
 
     assert changed is False
     assert restored == snapshot
+
+
+def test_failed_assistant_with_unexecuted_tool_calls_can_be_retried_exactly() -> None:
+    snapshot = EngineSnapshot(
+        system_prompt="",
+        model={"id": "example/model"},
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "exact input"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I will draft this now."},
+                    {
+                        "type": "toolCall",
+                        "id": "call-one",
+                        "name": "start_reply_draft",
+                        "arguments": {"target_thread_id": "thread-one", "body": "draft"},
+                    },
+                ],
+                "stopReason": "error",
+                "errorMessage": "A later tool call had unterminated arguments",
+            },
+        ],
+    )
+    events = [
+        SimpleNamespace(type="provider_response", payload={}),
+        SimpleNamespace(type="agent_event", payload={"type": "message_start"}),
+        SimpleNamespace(type="agent_event", payload={"type": "message_end"}),
+    ]
+
+    execution_started = _tool_execution_started_after_latest_provider_response(events)
+    restored, changed = _remove_failed_assistant_placeholder(
+        snapshot,
+        allow_unexecuted_tool_calls=execution_started is False,
+    )
+
+    assert execution_started is False
+    assert changed is True
+    assert restored.messages == snapshot.messages[:1]
+
+
+def test_failed_assistant_tool_calls_remain_when_execution_started() -> None:
+    events = [
+        SimpleNamespace(type="provider_response", payload={}),
+        SimpleNamespace(type="agent_event", payload={"type": "tool_execution_start"}),
+    ]
+
+    assert _tool_execution_started_after_latest_provider_response(events) is True
 
 
 def test_provider_error_boundary_is_not_a_tool_free_model_response() -> None:
