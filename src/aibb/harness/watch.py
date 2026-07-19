@@ -377,6 +377,7 @@ def watch_event_stream(
     poll_seconds: float = 0.25,
     output: TextIO | None = None,
     stop_when: Callable[[], bool] | None = None,
+    start_offset: int | None = None,
 ) -> None:
     events_path = run_dir.resolve() / "session" / "events.jsonl"
     while not events_path.exists():
@@ -396,7 +397,9 @@ def watch_event_stream(
     )
     console.print(Rule(f"Watching {renderer._model_label()} · {run_dir.name}", style="blue"))
     with events_path.open(encoding="utf-8") as stream:
-        if not from_start:
+        if start_offset is not None:
+            stream.seek(start_offset)
+        elif not from_start:
             stream.seek(0, 2)
         while True:
             position = stream.tell()
@@ -435,25 +438,48 @@ def watch_state_root(
     output: TextIO | None = None,
     max_runs: int | None = None,
 ) -> None:
-    """Watch the newest run, then automatically attach to newly created runs."""
+    """Watch the most recently active run, including resumed older runs."""
 
     state_root = state_root.resolve()
     existing = run_directories(state_root)
     if not existing and not follow:
         raise ValueError(f"No Slowboard runs found under {state_root}")
 
-    # A standing watcher starts with the newest retained run, not the entire
-    # historical state root. Everything present before it is an attachment
-    # baseline; newly discovered manifests are followed in creation order.
-    seen = set(existing[:-1])
-    pending = existing[-1:]
+    def stream_size(run_dir: Path) -> int:
+        try:
+            return (run_dir / "session/events.jsonl").stat().st_size
+        except OSError:
+            return 0
+
+    def activity_key(run_dir: Path) -> tuple[int, float, str]:
+        try:
+            modified = (run_dir / "session/events.jsonl").stat().st_mtime_ns
+        except OSError:
+            modified = 0
+        try:
+            created = RunManifest.load(run_dir / "manifest.json").created_at.timestamp()
+        except (OSError, ValueError):
+            created = 0.0
+        return modified, created, run_dir.name
+
+    # Existing history is a baseline, except for the run whose event stream was
+    # touched most recently. This lets a fresh standing watcher attach to an
+    # older run that was resumed after a newer run completed.
+    active = max(existing, key=activity_key) if existing else None
+    observed_sizes = {run_dir: stream_size(run_dir) for run_dir in existing if run_dir != active}
+    pending = [active] if active is not None else []
     watched = 0
     waiting_announced = False
     console = Console(file=output, highlight=False, soft_wrap=False)
 
     while True:
         if not pending:
-            pending = [run_dir for run_dir in run_directories(state_root) if run_dir not in seen]
+            candidates = [
+                run_dir
+                for run_dir in run_directories(state_root)
+                if stream_size(run_dir) > observed_sizes.get(run_dir, 0)
+            ]
+            pending = sorted(candidates, key=activity_key, reverse=True)[:1]
             if not pending:
                 if not follow or (max_runs is not None and watched >= max_runs):
                     return
@@ -464,11 +490,14 @@ def watch_state_root(
                 continue
 
         run_dir = pending.pop(0)
-        seen.add(run_dir)
+        resume_offset = observed_sizes.get(run_dir)
         waiting_announced = False
 
-        def newer_run_exists() -> bool:
-            return any(candidate not in seen for candidate in run_directories(state_root))
+        def other_run_activity_exists(current_run: Path = run_dir) -> bool:
+            return any(
+                candidate != current_run and stream_size(candidate) > observed_sizes.get(candidate, 0)
+                for candidate in run_directories(state_root)
+            )
 
         watch_event_stream(
             run_dir,
@@ -477,8 +506,10 @@ def watch_state_root(
             show_reasoning=show_reasoning,
             poll_seconds=poll_seconds,
             output=output,
-            stop_when=newer_run_exists if follow else None,
+            stop_when=other_run_activity_exists if follow else None,
+            start_offset=resume_offset,
         )
+        observed_sizes[run_dir] = stream_size(run_dir)
         watched += 1
         if not follow or (max_runs is not None and watched >= max_runs):
             return

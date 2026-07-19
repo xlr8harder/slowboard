@@ -30,11 +30,15 @@ def _write_run(
     run_dir = state_root / run_id
     events_dir = run_dir / "session"
     events_dir.mkdir(parents=True)
-    manifest = make_manifest().model_copy(
+    base_manifest = make_manifest()
+    manifest = base_manifest.model_copy(
         update={
             "run_id": run_id,
             "created_at": created_at,
             "expires_at": created_at + timedelta(days=1),
+            "identity": base_manifest.identity.model_copy(
+                update={"display_name": display_name, "model_name": f"example/{display_name}"}
+            ),
         }
     )
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -346,6 +350,47 @@ def test_standing_watcher_switches_when_previous_stream_has_no_terminal_event(tm
     assert "Unterminated" in rendered
     assert "run-watch-after-gap" in rendered
     assert "After Gap" in rendered
+
+
+def test_standing_watcher_reattaches_when_an_older_run_is_resumed(tmp_path: Path, monkeypatch) -> None:
+    now = datetime.now(UTC)
+    resumed_run = _write_run(tmp_path, "run-watch-resumed-older", now, "Resumed Older", completed=False)
+    resumed_events = resumed_run / "session/events.jsonl"
+    with resumed_events.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "run_suspended", "payload": {"reason": "provider error"}}) + "\n")
+    _write_completed_run(tmp_path, "run-watch-newer-complete", now + timedelta(seconds=1), "Newer Complete")
+    appended = False
+
+    def resume_older_on_wait(_: float) -> None:
+        nonlocal appended
+        if not appended:
+            appended = True
+            with resumed_events.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "type": "run_resumed",
+                            "timestamp": "2026-07-19T07:03:00Z",
+                            "payload": {"retrying_provider_error": True},
+                        }
+                    )
+                    + "\n"
+                )
+                stream.write(
+                    json.dumps({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}})
+                    + "\n"
+                )
+
+    monkeypatch.setattr(watch_module.time, "sleep", resume_older_on_wait)
+    output = StringIO()
+
+    watch_state_root(tmp_path, poll_seconds=0.001, output=output, max_runs=2)
+
+    rendered = output.getvalue()
+    assert "run-watch-newer-complete" in rendered
+    assert "run-watch-resumed-older" in rendered
+    assert "run resumed · exact provider retry · Resumed Older" in rendered
+    assert "run completed · model_concluded_visit · Resumed Older" in rendered
 
 
 def test_single_run_watcher_waits_through_suspension_for_resume(tmp_path: Path, monkeypatch) -> None:
