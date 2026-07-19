@@ -186,24 +186,35 @@ def preview_run_context(
 @app.command("extend-inference-budget")
 def extend_inference_budget(
     run_id: Annotated[str, typer.Option("--run-id", help="Suspended run ID to extend.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", min=8, help="Curator reason recorded in the append-only private session stream."),
+    ],
     max_total_tokens: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--max-total-tokens",
             min=1_000,
             help="New cumulative input and total-token ceilings; must exceed both existing ceilings.",
         ),
-    ],
-    reason: Annotated[
-        str,
-        typer.Option("--reason", min=8, help="Curator reason recorded in the append-only private session stream."),
-    ],
+    ] = None,
+    max_calls: Annotated[
+        int | None,
+        typer.Option(
+            "--max-calls",
+            min=1,
+            help="New cumulative provider-call ceiling; must exceed the existing ceiling.",
+        ),
+    ] = None,
     state_root: Annotated[
         Path,
         typer.Option("--state-root", exists=True, file_okay=False, resolve_path=True),
     ] = Path("../aibb-state"),
 ) -> None:
-    """Extend only a suspended run's operational inference-token ceiling."""
+    """Extend a suspended run's operational inference ceiling."""
+
+    if max_total_tokens is None and max_calls is None:
+        raise typer.BadParameter("Provide --max-calls, --max-total-tokens, or both")
 
     run_dir = state_root / run_id
     manifest_path = run_dir / "manifest.json"
@@ -217,7 +228,11 @@ def extend_inference_budget(
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
     previous, updated = ledger.extend_limits(
         "inference",
-        BudgetLimits(max_input_tokens=max_total_tokens, max_total_tokens=max_total_tokens),
+        BudgetLimits(
+            max_calls=max_calls,
+            max_input_tokens=max_total_tokens,
+            max_total_tokens=max_total_tokens,
+        ),
     )
     event = store.append(
         "inference_budget_extended",
@@ -238,6 +253,8 @@ def extend_inference_budget(
                 "status": "extended",
                 "previous_max_total_tokens": previous.max_total_tokens,
                 "new_max_total_tokens": updated.max_total_tokens,
+                "previous_max_calls": previous.max_calls,
+                "new_max_calls": updated.max_calls,
             },
             sort_keys=True,
         )

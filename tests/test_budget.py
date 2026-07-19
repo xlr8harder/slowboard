@@ -111,9 +111,11 @@ def test_budget_extension_only_increases_selected_limits_and_preserves_usage(tmp
 
     previous, updated = ledger.extend_limits(
         "inference",
-        BudgetLimits(max_input_tokens=40_000, max_total_tokens=48_000),
+        BudgetLimits(max_calls=8, max_input_tokens=40_000, max_total_tokens=48_000),
     )
 
+    assert previous.max_calls == 4
+    assert updated.max_calls == 8
     assert previous.max_input_tokens == 20_000
     assert updated.max_input_tokens == 40_000
     assert ledger.read().accounts["inference"].used.input_tokens == 80

@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 from test_archive_build import _write_archive
 from test_budget import make_manifest
+from typer.testing import CliRunner
 
+from aibb.cli import app
 from aibb.harness.engine import EngineSnapshot
 from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
@@ -18,6 +20,8 @@ from aibb.harness.runner import (
     _turn_boundary_outcome,
     create_run_manifest,
 )
+from aibb.runtime import BudgetLedger
+from aibb.sessions import SessionStore
 
 
 def test_current_orientation_adds_curatorial_permission_as_a_new_version() -> None:
@@ -31,6 +35,39 @@ def test_current_orientation_adds_curatorial_permission_as_a_new_version() -> No
     assert "you may begin a new thread" in current
     assert "Silence remains a valid judgment." in current
     assert invitation not in prior
+
+
+def test_extend_inference_budget_can_raise_provider_call_ceiling(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    manifest = make_manifest()
+    run_dir = state_root / manifest.run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
+    store = SessionStore(run_dir / "session", manifest.run_id)
+    store.write_checkpoint(EngineSnapshot(system_prompt="", model={"id": "example/model"}, messages=[]))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "extend-inference-budget",
+            "--run-id",
+            manifest.run_id,
+            "--state-root",
+            str(state_root),
+            "--max-calls",
+            "12",
+            "--reason",
+            "Continue a cheap model visit past its initial operational ceiling.",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert ledger.read().accounts["inference"].limits.max_calls == 12
+    extension = store.read_events()[-1]
+    assert extension.type == "inference_budget_extended"
+    assert extension.payload["previous"]["max_calls"] == 4
+    assert extension.payload["updated"]["max_calls"] == 12
 
 
 def test_turn_boundary_distinguishes_model_conclusion_from_safe_suspension(tmp_path: Path) -> None:
