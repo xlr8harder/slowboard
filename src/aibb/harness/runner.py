@@ -41,14 +41,16 @@ CURRENT_ORIENTATION_VERSION = "v0.4"
 
 
 def _remove_failed_assistant_placeholder(snapshot: EngineSnapshot) -> tuple[EngineSnapshot, bool]:
-    """Restore the input boundary after a provider error emitted no model content."""
+    """Restore the input boundary after a provider response failed before any tool could execute."""
     if not snapshot.messages:
         return snapshot, False
     last = snapshot.messages[-1]
+    content = last.get("content") or []
+    contains_tool_call = any(isinstance(block, dict) and block.get("type") == "toolCall" for block in content)
     retryable = (
         last.get("role") == "assistant"
         and last.get("stopReason") == "error"
-        and not last.get("content")
+        and not contains_tool_call
         and bool(last.get("errorMessage"))
     )
     if not retryable:
@@ -627,7 +629,12 @@ async def run_model_visit(
             if retrying_provider_error:
                 store.append(
                     "provider_retry_prepared",
-                    {"reason": "removed empty failed-assistant placeholder; model-visible input is unchanged"},
+                    {
+                        "reason": (
+                            "removed unexecuted failed-assistant turn; raw response remains private and "
+                            "model-visible input is unchanged"
+                        )
+                    },
                     "operator",
                 )
             engine = AibbHarnessEngine.from_snapshot(

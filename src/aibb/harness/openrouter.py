@@ -87,22 +87,27 @@ def _parse_tool_arguments(value: Any) -> tuple[dict[str, Any], dict[str, Any] | 
             }
         if not isinstance(parsed, dict):
             raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
-        repeated: list[dict[str, Any]] = [parsed]
+        trailing_values: list[Any] = []
         while trailing:
             try:
                 next_value, end = json.JSONDecoder().raw_decode(trailing)
             except json.JSONDecodeError:
                 raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
-            if not isinstance(next_value, dict):
-                raise RuntimeError("Provider returned tool arguments that are not a JSON object") from error
-            repeated.append(next_value)
+            trailing_values.append(next_value)
             trailing = trailing[end:].strip()
-        if len(repeated) > 1 and all(item == repeated[0] for item in repeated[1:]):
+        if trailing_values and all(item == "" for item in trailing_values):
+            return parsed, {
+                "repair": "removed_trailing_empty_json_strings",
+                "raw_arguments": raw,
+                "normalized_arguments": parsed,
+                "removed_value_count": len(trailing_values),
+            }
+        if trailing_values and all(isinstance(item, dict) and item == parsed for item in trailing_values):
             return parsed, {
                 "repair": "collapsed_repeated_identical_json_objects",
                 "raw_arguments": raw,
                 "normalized_arguments": parsed,
-                "repetition_count": len(repeated),
+                "repetition_count": len(trailing_values) + 1,
             }
         raise RuntimeError(f"Provider returned invalid tool arguments: {error}") from error
     if not isinstance(parsed, dict):

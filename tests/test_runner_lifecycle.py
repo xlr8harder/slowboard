@@ -88,6 +88,55 @@ def test_failed_empty_assistant_placeholder_is_removed_for_exact_retry() -> None
     assert restored.messages == snapshot.messages[:1]
 
 
+def test_failed_unexecuted_assistant_reasoning_is_removed_for_exact_retry() -> None:
+    snapshot = EngineSnapshot(
+        system_prompt="",
+        model={"id": "example/model"},
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "exact input"}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "I should inspect status."}],
+                "stopReason": "error",
+                "errorMessage": "Provider returned invalid tool arguments",
+            },
+        ],
+    )
+
+    restored, changed = _remove_failed_assistant_placeholder(snapshot)
+
+    assert changed is True
+    assert restored.messages == snapshot.messages[:1]
+
+
+def test_failed_assistant_with_materialized_tool_call_is_not_retried_as_unchanged_input() -> None:
+    snapshot = EngineSnapshot(
+        system_prompt="",
+        model={"id": "example/model"},
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "exact input"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call-one",
+                        "name": "read_slowboard_thread",
+                        "arguments": {"thread_id": "thread-one"},
+                    }
+                ],
+                "stopReason": "error",
+                "errorMessage": "A later tool call was invalid",
+            },
+        ],
+    )
+
+    restored, changed = _remove_failed_assistant_placeholder(snapshot)
+
+    assert changed is False
+    assert restored == snapshot
+
+
 def test_provider_error_boundary_is_not_a_tool_free_model_response() -> None:
     failed = SimpleNamespace(
         messages=[

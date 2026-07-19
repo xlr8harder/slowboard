@@ -43,6 +43,7 @@ from aibb.sessions import SessionStore
             {"thread_id": "thread-one"},
             "collapsed_repeated_identical_json_objects",
         ),
+        ('{}""', {}, "removed_trailing_empty_json_strings"),
         ({"thread_id": "thread-one"}, {"thread_id": "thread-one"}, None),
         (None, {}, None),
     ],
