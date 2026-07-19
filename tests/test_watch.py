@@ -362,6 +362,25 @@ def test_single_run_watcher_waits_through_suspension_for_resume(tmp_path: Path, 
             resumed = True
             with events_path.open("a", encoding="utf-8") as stream:
                 stream.write(
+                    json.dumps(
+                        {
+                            "type": "provider_retry_prepared",
+                            "payload": {"reason": "model-visible input is unchanged"},
+                        }
+                    )
+                    + "\n"
+                )
+                stream.write(
+                    json.dumps(
+                        {
+                            "type": "run_resumed",
+                            "timestamp": "2026-07-19T06:07:53Z",
+                            "payload": {"retrying_provider_error": True},
+                        }
+                    )
+                    + "\n"
+                )
+                stream.write(
                     json.dumps({"type": "run_completed", "payload": {"reason": "model_concluded_visit"}}) + "\n"
                 )
 
@@ -372,6 +391,8 @@ def test_single_run_watcher_waits_through_suspension_for_resume(tmp_path: Path, 
 
     rendered = output.getvalue()
     assert "run suspended · single-turn boundary" in rendered
+    assert "Exact provider retry prepared" in rendered
+    assert "run resumed · exact provider retry · Resumable (example/Resumable)" in rendered
     assert "run completed · model_concluded_visit · Resumable (example/Resumable)" in rendered
 
 

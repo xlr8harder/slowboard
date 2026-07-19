@@ -316,6 +316,17 @@ class RunEventRenderer:
             self.console.print(
                 Rule(f"Inference turn {self.provider_turn} · {self._model_label()} · {timestamp}", style="blue")
             )
+        elif event_type == "provider_retry_prepared":
+            self.console.print(
+                Panel(
+                    escape(str(payload.get("reason") or "The failed provider turn was removed for an exact retry.")),
+                    title="Exact provider retry prepared",
+                    border_style="yellow",
+                )
+            )
+        elif event_type == "run_resumed":
+            retry_label = " · exact provider retry" if payload.get("retrying_provider_error") else ""
+            self.console.print(Rule(f"run resumed{retry_label} · {self._model_label()} · {timestamp}", style="yellow"))
         elif event_type == "provider_response":
             self._render_provider_response(payload)
         elif event_type == "provider_tool_batch_truncated":
