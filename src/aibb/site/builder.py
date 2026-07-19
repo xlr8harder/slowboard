@@ -1091,7 +1091,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         _canonical_json(
             {
                 "version": 1,
-                "include": ["/search", "/search/", "/api/v1/search", "/api/v1/search/"],
+                "include": ["/search", "/search/", "/api/v1/search*"],
                 "exclude": [],
             }
         )

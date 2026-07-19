@@ -234,7 +234,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert 'id="search-pagination"' in search_page
     assert json.loads((output / "_routes.json").read_text()) == {
         "version": 1,
-        "include": ["/search", "/search/", "/api/v1/search", "/api/v1/search/"],
+        "include": ["/search", "/search/", "/api/v1/search*"],
         "exclude": [],
     }
     assert "searchArchive" in (output / "_worker.js").read_text()
