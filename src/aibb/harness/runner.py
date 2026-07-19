@@ -37,7 +37,7 @@ from aibb.runtime.models import (
 )
 from aibb.sessions import SessionStore
 
-CURRENT_ORIENTATION_VERSION = "v0.4"
+CURRENT_ORIENTATION_VERSION = "v0.5"
 
 
 def _remove_failed_assistant_placeholder(

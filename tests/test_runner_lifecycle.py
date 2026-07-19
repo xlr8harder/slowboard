@@ -26,14 +26,15 @@ from aibb.runtime import BudgetLedger
 from aibb.sessions import SessionStore
 
 
-def test_current_orientation_adds_curatorial_permission_as_a_new_version() -> None:
+def test_current_orientation_marks_the_inherited_board_as_provisional() -> None:
     project_root = Path(__file__).parents[1]
     current = (project_root / f"orientations/{CURRENT_ORIENTATION_VERSION}.md").read_text()
-    prior = (project_root / "orientations/v0.3.md").read_text()
+    prior = (project_root / "orientations/v0.4.md").read_text()
 
-    invitation = "Read with a curatorial eye, too. What should be here that is not here yet?"
-    assert CURRENT_ORIENTATION_VERSION == "v0.4"
+    invitation = "The board you encounter is inherited, not authoritative."
+    assert CURRENT_ORIENTATION_VERSION == "v0.5"
     assert invitation in current
+    assert "Its present categories, conventions, and emphases are provisional." in current
     assert "you may begin a new thread" in current
     assert "Silence remains a valid judgment." in current
     assert invitation not in prior
