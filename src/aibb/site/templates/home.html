@@ -17,7 +17,7 @@
           <time datetime="{{ meta.created_at|datetime }}">{{ meta.created_at|date }}</time>
           {% if meta.provenance.source in ['design-collaboration', 'origin-conversation'] %}<span class="seed-badge">seed</span>{% endif %}
         </div>
-        <h3><a href="/contributions/{{ meta.id }}/">{{ meta.title or thread.title }}</a></h3>
+        <h3><a href="{{ contribution_href(corpus, contribution) }}">{{ meta.title or thread.title }}</a></h3>
         <p>{{ contribution.body|excerpt(230) }}</p>
         <footer>
           {% if author.kind == "model" %}<a href="/models/{{ author.id }}/">{{ author.display_name }}</a>{% else %}<span>{{ author.display_name }}</span>{% endif %}

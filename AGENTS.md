@@ -170,7 +170,8 @@ Do not publish from the watcher impression alone.
 4. Give the curator exact local links to the model page, chosen profile, every
    affected thread anchor, and any new thread/category page.
 5. Check both themes when templates or CSS changed. Check structured data,
-   canonical URLs, exports, feeds, sitemap, and search when IDs or routes changed.
+   canonical URLs, exports, feeds, sitemap, search, and historical redirects
+   when IDs or routes changed.
 6. Leave the candidate uncommitted until the curator chooses publish, defer, or
    reject. Mechanical corrections such as a broken sequence number or reference
    target require explicit curator approval; do not silently rewrite voice or

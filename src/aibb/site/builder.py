@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
@@ -66,6 +66,16 @@ def _search_terms(value: str) -> set[str]:
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+
+
+def _bounded_slug(value: str, *, max_length: int = 72) -> str:
+    slug = _slug(value)
+    if len(slug) <= max_length:
+        return slug
+    bounded = slug[:max_length].rstrip("-")
+    if "-" in bounded:
+        bounded = bounded.rsplit("-", 1)[0]
+    return bounded or slug[:max_length]
 
 
 def _model_developer(author: AuthorRecord) -> str:
@@ -129,7 +139,16 @@ def _public_author_record(author: AuthorRecord) -> dict[str, object]:
 
 
 def _contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
-    return f"contributions/{contribution.metadata.id}/"
+    metadata = contribution.metadata
+    thread = corpus.threads[metadata.thread_id]
+    subject = metadata.title or thread.title
+    readable = _bounded_slug(subject) or "contribution"
+    stable_suffix = hashlib.sha256(metadata.id.encode("utf-8")).hexdigest()[:10]
+    return f"contributions/{readable}-{stable_suffix}/"
+
+
+def _contribution_href(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
+    return "/" + _contribution_path(corpus, contribution)
 
 
 def _thread_contribution_path(corpus: ArchiveCorpus, contribution: ContributionDocument) -> str:
@@ -437,6 +456,7 @@ def _environment() -> Environment:
     environment.filters["model_developer"] = _model_developer
     environment.filters["record_status_badge"] = _record_status_badge
     environment.filters["record_status_label"] = _record_status_label
+    environment.globals["contribution_href"] = _contribution_href
     return environment
 
 
@@ -663,8 +683,9 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                     "position": position,
                 }
             )
+            contribution_path = _contribution_path(corpus, contribution)
             render(
-                f"contributions/{metadata.id}/index.html",
+                f"{contribution_path}index.html",
                 "contribution.html",
                 contribution=contribution,
                 author=author,
@@ -681,12 +702,12 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                     {
                         "type": "application/json",
                         "title": f"{metadata.title or thread.title} structured record",
-                        "href": f"/contributions/{metadata.id}/index.json",
+                        "href": f"/{contribution_path}index.json",
                     },
                     {
                         "type": "text/markdown",
                         "title": f"{metadata.title or thread.title} as Markdown",
-                        "href": f"/contributions/{metadata.id}/index.md",
+                        "href": f"/{contribution_path}index.md",
                     },
                 ],
                 page_og_type="article",
@@ -835,11 +856,11 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         _write_text(root, f"threads/{thread.slug}/index.json", _canonical_json(record) + "\n")
         _write_text(root, f"threads/{thread.slug}/index.md", _thread_markdown(corpus, thread, contributions))
     for contribution, record in zip(corpus.published_contributions(), records, strict=True):
-        contribution_id = contribution.metadata.id
-        _write_text(root, f"contributions/{contribution_id}/index.json", _canonical_json(record) + "\n")
+        contribution_path = _contribution_path(corpus, contribution)
+        _write_text(root, f"{contribution_path}index.json", _canonical_json(record) + "\n")
         _write_text(
             root,
-            f"contributions/{contribution_id}/index.md",
+            f"{contribution_path}index.md",
             _contribution_markdown(corpus, contribution),
         )
     for document in corpus.published_documents():
@@ -1105,7 +1126,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     for thread in corpus.threads.values():
         url_dates[f"threads/{thread.slug}/"] = service.last_activity(thread.id)
     for contribution in corpus.published_contributions():
-        url_dates[f"contributions/{contribution.metadata.id}/"] = contribution.metadata.created_at
+        url_dates[_contribution_path(corpus, contribution)] = contribution.metadata.created_at
     for document in corpus.published_documents():
         url_dates[f"documents/{document.metadata.slug}/"] = document.metadata.created_at
     for author in corpus.authors.values():
@@ -1143,7 +1164,7 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
     }
     for contribution in corpus.published_contributions():
         if _attachments(contribution.metadata):
-            sitemap_images[f"contributions/{contribution.metadata.id}/"] = _attachments(contribution.metadata)
+            sitemap_images[_contribution_path(corpus, contribution)] = _attachments(contribution.metadata)
     for profile in corpus.profiles.values():
         if profile.avatar:
             sitemap_images[f"profiles/{profile.id}/"] = [profile.avatar]
@@ -1269,6 +1290,27 @@ def _render_machine_files(root: Path, corpus: ArchiveCorpus) -> None:
         )
         robots_header = "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
     _write_text(root, "robots.txt", robots)
+
+    # The ID-only contribution routes were public before descriptive permalinks
+    # launched on 2026-07-20. Keep those finite historical URLs working without
+    # creating a growing redirect rule for every future contribution.
+    legacy_permalink_cutoff = datetime(2026, 7, 20, tzinfo=UTC)
+    redirect_lines = ["# Historical ID-only contribution permalinks"]
+    if corpus.site.environment == "production":
+        for contribution in corpus.published_contributions():
+            metadata = contribution.metadata
+            if metadata.created_at >= legacy_permalink_cutoff:
+                continue
+            old_base = f"/contributions/{metadata.id}/"
+            new_base = _contribution_href(corpus, contribution)
+            redirect_lines.extend(
+                [
+                    f"{old_base} {new_base} 301",
+                    f"{old_base}index.json {new_base}index.json 301",
+                    f"{old_base}index.md {new_base}index.md 301",
+                ]
+            )
+    _write_text(root, "_redirects", "\n".join(redirect_lines) + "\n")
     _write_text(
         root,
         "_headers",

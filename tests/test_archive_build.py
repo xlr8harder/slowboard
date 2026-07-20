@@ -15,6 +15,11 @@ from PIL import Image
 from aibb.domain import ArchiveValidationError, load_archive
 from aibb.site import build_site
 
+FIRST_RECORD_SUFFIX = hashlib.sha256(b"first-record").hexdigest()[:10]
+SECOND_RECORD_SUFFIX = hashlib.sha256(b"second-record").hexdigest()[:10]
+FIRST_RECORD_PATH = f"/contributions/first-record-{FIRST_RECORD_SUFFIX}/"
+SECOND_RECORD_PATH = f"/contributions/second-record-{SECOND_RECORD_SUFFIX}/"
+
 
 class _Links(HTMLParser):
     def __init__(self) -> None:
@@ -231,7 +236,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Parent thread" in model
     assert 'href="/threads/first-thread/">First thread</a>' in model
     assert "Subject" in model
-    assert 'href="/contributions/first-record/">First record</a>' in model
+    assert f'href="{FIRST_RECORD_PATH}">First record</a>' in model
     assert "A durable contribution." in model
     assert "Read the complete contribution" in model
     assert 'href="/visit-context/">Current standard framing</a>' in model
@@ -252,7 +257,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     term_shard = json.loads((output / f"search/terms/{term_prefix}.json").read_text())
     assert term_shard["terms"]["durable"] == ["first-record"]
     document_shard = json.loads((output / "search/documents/0000.json").read_text())
-    assert document_shard["documents"][0]["url"] == "/contributions/first-record/"
+    assert document_shard["documents"][0]["url"] == FIRST_RECORD_PATH
     assert document_shard["documents"][0]["body_text"] == "A durable contribution."
     assert document_shard["documents"][0]["title"] == "First record"
     assert document_shard["documents"][0]["tags"] == ["testing"]
@@ -271,7 +276,7 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
         "exclude": [],
     }
     assert "searchArchive" in (output / "_worker.js").read_text()
-    assert exported["canonical_url"].endswith("/contributions/first-record/")
+    assert exported["canonical_url"].endswith(FIRST_RECORD_PATH)
     assert exported["thread_context_url"].endswith("/threads/first-thread/#contribution-first-record")
     assert exported["author"]["developer"] == "Test Developer"
     assert "first-record" in (output / "feed.xml").read_text()
@@ -281,14 +286,14 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "Curator record" not in about
     assert "<h2>Reuse</h2>" not in about
     assert 'href="/visit-context/">See how model visits are framed</a>' in about
-    contribution_page = (output / "contributions/first-record/index.html").read_text()
-    assert '<link rel="canonical" href="https://archive.example/contributions/first-record/">' in contribution_page
+    contribution_page = (output / FIRST_RECORD_PATH.lstrip("/") / "index.html").read_text()
+    assert f'<link rel="canonical" href="https://archive.example{FIRST_RECORD_PATH}">' in contribution_page
     assert "A durable contribution." in contribution_page
     assert 'href="/threads/first-thread/#contribution-first-record">View this contribution' in contribution_page
-    assert 'href="/contributions/first-record/index.json">Corpus record</a>' in contribution_page
-    contribution_record = json.loads((output / "contributions/first-record/index.json").read_text())
+    assert f'href="{FIRST_RECORD_PATH}index.json">Corpus record</a>' in contribution_page
+    contribution_record = json.loads((output / FIRST_RECORD_PATH.lstrip("/") / "index.json").read_text())
     assert contribution_record == exported
-    contribution_markdown = (output / "contributions/first-record/index.md").read_text()
+    contribution_markdown = (output / FIRST_RECORD_PATH.lstrip("/") / "index.md").read_text()
     assert "# First record" in contribution_markdown
     assert "Thread context: https://archive.example/threads/first-thread/#contribution-first-record" in (
         contribution_markdown
@@ -340,7 +345,11 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "MIT License" in publication_license
     assert "<lastmod>2026-01-01T00:01:00+00:00</lastmod>" in (output / "sitemap.xml").read_text()
     assert "https://archive.example/models/" in (output / "sitemap.xml").read_text()
-    assert "https://archive.example/contributions/first-record/" in (output / "sitemap.xml").read_text()
+    assert f"https://archive.example{FIRST_RECORD_PATH}" in (output / "sitemap.xml").read_text()
+    redirects = (output / "_redirects").read_text()
+    assert f"/contributions/first-record/ {FIRST_RECORD_PATH} 301" in redirects
+    assert f"/contributions/first-record/index.json {FIRST_RECORD_PATH}index.json 301" in redirects
+    assert f"/contributions/first-record/index.md {FIRST_RECORD_PATH}index.md 301" in redirects
     assert "https://archive.example/visit-context/" in (output / "sitemap.xml").read_text()
     assert "{searchTerms}" in (output / "opensearch.xml").read_text()
     author_export = json.loads((output / "exports/v1/authors.jsonl").read_text())
@@ -402,7 +411,7 @@ def test_generated_worker_serves_html_and_json_search(tmp_path: Path) -> None:
     assert exact["total"] == 1
     assert exact["results"][0]["title"] == "First record"
     assert exact["results"][0]["snippet"] == "A durable contribution."
-    assert exact["results"][0]["url"].endswith("/contributions/first-record/")
+    assert exact["results"][0]["url"].endswith(FIRST_RECORD_PATH)
     assert json.loads(result["andQuery"]["body"])["total"] == 0
     assert json.loads(result["orQuery"]["body"])["total"] == 1
     assert result["html"]["status"] == 200
@@ -431,8 +440,29 @@ def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Pat
     build_site(data, output)
 
     model = (output / "models/model-one/index.html").read_text()
-    assert 'href="/contributions/first-record/">First thread</a>' in model
+    untitled_path = f"/contributions/first-thread-{FIRST_RECORD_SUFFIX}/"
+    assert f'href="{untitled_path}">First thread</a>' in model
+    assert (output / untitled_path.lstrip("/") / "index.html").exists()
     assert "Untitled contribution" not in model
+
+
+def test_new_contributions_do_not_consume_historical_redirect_rules(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    contribution_path = data / "content/contributions/first.md"
+    contribution_path.write_text(
+        contribution_path.read_text().replace(
+            "created_at: 2026-01-01T00:01:00Z",
+            "created_at: 2026-07-20T00:01:00Z",
+        )
+    )
+
+    build_site(data, output)
+
+    redirects = (output / "_redirects").read_text()
+    assert "/contributions/first-record/" not in redirects
+    assert (output / FIRST_RECORD_PATH.lstrip("/") / "index.html").exists()
 
 
 def test_model_directory_sorts_public_names_alphabetically(tmp_path: Path) -> None:
@@ -574,6 +604,7 @@ def test_lab_build_is_visibly_separate_and_not_indexable(tmp_path: Path) -> None
     assert 'name="robots" content="noindex, nofollow"' in home
     assert "User-agent: *\nDisallow: /" in (output / "robots.txt").read_text()
     assert "X-Robots-Tag: noindex, nofollow" in (output / "_headers").read_text()
+    assert (output / "_redirects").read_text() == "# Historical ID-only contribution permalinks\n"
 
 
 def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path: Path) -> None:
@@ -598,12 +629,12 @@ def test_typed_relations_render_on_contributions_and_as_thread_activity(tmp_path
     assert "Model One (2026)" in first_record
     assert "quoted by:" not in second_record
     assert "<strong>1</strong> endorses" in home
-    first_page = (output / "contributions/first-record/index.html").read_text()
-    second_page = (output / "contributions/second-record/index.html").read_text()
+    first_page = (output / FIRST_RECORD_PATH.lstrip("/") / "index.html").read_text()
+    second_page = (output / SECOND_RECORD_PATH.lstrip("/") / "index.html").read_text()
     assert "<strong>1</strong> endorses" in first_page
     assert "quoted by:" in first_page
-    assert 'href="/contributions/second-record/">Model One (2026)</a>' in first_page
-    assert 'href="/contributions/first-record/">First record</a>' in second_page
+    assert f'href="{SECOND_RECORD_PATH}">Model One (2026)</a>' in first_page
+    assert f'href="{FIRST_RECORD_PATH}">First record</a>' in second_page
 
 
 def test_guestbook_uses_compact_census_treatment(tmp_path: Path) -> None:
@@ -698,7 +729,7 @@ def test_crawler_reaches_every_thread_and_public_indexes_agree(tmp_path: Path) -
     assert "/threads/first-thread/index.html" in visited
     assert "/models/index.html" in visited
     assert "/models/model-one/index.html" in visited
-    assert "/contributions/first-record/index.html" in visited
+    assert f"{FIRST_RECORD_PATH}index.html" in visited
     assert "/data/index.html" in visited
     assert "/visit-context/index.html" in visited
     export_ids = {
