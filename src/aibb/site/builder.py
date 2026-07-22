@@ -220,10 +220,17 @@ def _author_url(corpus: ArchiveCorpus, author: AuthorRecord) -> str:
     return _absolute(corpus, f"{prefix}/{author.id}/")
 
 
+def _author_identity_url(corpus: ArchiveCorpus, author: AuthorRecord) -> str:
+    return f"{_author_url(corpus, author)}#identity"
+
+
 def _author_json_ld(corpus: ArchiveCorpus, author: AuthorRecord) -> dict[str, object]:
+    # Google's discussion-forum and profile-page features only accept Person or
+    # Organization here. It recommends Person as the fallback for an unknown
+    # account type. additionalType preserves the more precise model semantics.
     result: dict[str, object] = {
-        "@type": "SoftwareApplication" if author.kind == "model" else "Person",
-        "@id": _author_url(corpus, author),
+        "@type": "Person",
+        "@id": _author_identity_url(corpus, author),
         "name": author.display_name,
         "url": _author_url(corpus, author),
         "identifier": author.id,
@@ -231,9 +238,9 @@ def _author_json_ld(corpus: ArchiveCorpus, author: AuthorRecord) -> dict[str, ob
     if author.kind == "model":
         result.update(
             {
-                "applicationCategory": "Artificial intelligence model",
+                "additionalType": "https://schema.org/SoftwareApplication",
                 "alternateName": _route_independent_model_id(author),
-                "creator": {"@type": "Organization", "name": _model_developer(author)},
+                "description": f"Artificial intelligence model developed by {_model_developer(author)}.",
             }
         )
     return result
@@ -274,6 +281,8 @@ def _posting_json_ld(
     }
     if metadata.title:
         result["headline"] = metadata.title
+    if author.kind == "model":
+        result["digitalSourceType"] = "https://schema.org/TrainedAlgorithmicMediaDigitalSource"
     if _attachments(metadata):
         result["image"] = [_image_json_ld(corpus, item) for item in _attachments(metadata)]
     return result
@@ -676,13 +685,16 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                     "@context": "https://schema.org",
                     "mainEntityOfPage": _absolute(corpus, _contribution_path(corpus, contribution)),
                     "isPartOf": {
-                        "@type": "DiscussionForumPosting",
+                        "@type": "WebPage",
+                        "@id": _absolute(corpus, f"threads/{thread.slug}/"),
                         "name": thread.title,
                         "url": _absolute(corpus, f"threads/{thread.slug}/"),
                     },
                     "position": position,
                 }
             )
+            if position == 1 and not metadata.title:
+                contribution_json_ld["headline"] = thread.title
             contribution_path = _contribution_path(corpus, contribution)
             render(
                 f"{contribution_path}index.html",
@@ -765,6 +777,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                     "@type": "ProfilePage",
                     "@id": _absolute(corpus, f"models/{author.id}/"),
                     "url": _absolute(corpus, f"models/{author.id}/"),
+                    "dateCreated": author.created_at.isoformat(),
                     "mainEntity": author_json_ld,
                 },
                 page_images=[profile.avatar] if profile and profile.avatar else [],
@@ -787,6 +800,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
                 "@type": "ProfilePage",
                 "@id": _absolute(corpus, f"profiles/{profile.id}/"),
                 "url": _absolute(corpus, f"profiles/{profile.id}/"),
+                "dateCreated": profile.created_at.isoformat(),
                 "mainEntity": author_json_ld,
             },
             page_images=[profile.avatar] if profile.avatar else [],

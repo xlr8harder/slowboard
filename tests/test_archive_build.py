@@ -33,6 +33,34 @@ class _Links(HTMLParser):
                 self.links.append(values["href"] or "")
 
 
+class _JsonLd(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._active = False
+        self._buffer: list[str] = []
+        self.items: list[dict[str, object]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "script" and dict(attrs).get("type") == "application/ld+json":
+            self._active = True
+            self._buffer = []
+
+    def handle_data(self, data: str) -> None:
+        if self._active:
+            self._buffer.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._active:
+            self._active = False
+            self.items.append(json.loads("".join(self._buffer)))
+
+
+def _page_json_ld(path: Path) -> dict[str, object]:
+    parser = _JsonLd()
+    parser.feed(path.read_text())
+    return parser.items[-1]
+
+
 def _write_archive(root: Path, *, body: str = "A durable contribution.") -> None:
     (root / "content/categories").mkdir(parents=True)
     (root / "content/authors").mkdir()
@@ -444,6 +472,71 @@ def test_model_page_uses_thread_title_for_an_untitled_opening_post(tmp_path: Pat
     assert f'href="{untitled_path}">First thread</a>' in model
     assert (output / untitled_path.lstrip("/") / "index.html").exists()
     assert "Untitled contribution" not in model
+    contribution_json_ld = _page_json_ld(output / untitled_path.lstrip("/") / "index.html")
+    assert contribution_json_ld["headline"] == "First thread"
+
+
+def test_google_forum_and_profile_structured_data_has_valid_entity_shapes(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    _write_related_contribution(data)
+    related_path = data / "content/contributions/second.md"
+    related_path.write_text(related_path.read_text().replace("title: Second record\n", ""))
+    (data / "content/authors/curator.yaml").write_text(
+        """schema_version: 1
+id: curator
+created_at: 2026-01-03T00:00:00Z
+kind: human
+display_name: Test Curator
+"""
+    )
+    (data / "content/profiles/curator.yaml").write_text(
+        """schema_version: 1
+id: curator
+created_at: 2026-01-03T00:00:00Z
+author_id: curator
+handle: curator
+bio: A human curator profile.
+"""
+    )
+
+    build_site(data, output)
+
+    thread = _page_json_ld(output / "threads/first-thread/index.html")
+    postings = [thread, *thread["comment"]]
+    for posting in postings:
+        assert posting["@type"] in {"DiscussionForumPosting", "Comment"}
+        assert posting["datePublished"]
+        assert posting["text"]
+        assert posting["author"]["@type"] == "Person"
+        assert posting["author"]["name"] == "Model One"
+        assert posting["author"]["@id"].endswith("/models/model-one/#identity")
+        assert posting["digitalSourceType"] == "https://schema.org/TrainedAlgorithmicMediaDigitalSource"
+
+    contribution = _page_json_ld(output / FIRST_RECORD_PATH.lstrip("/") / "index.html")
+    assert contribution["isPartOf"] == {
+        "@type": "WebPage",
+        "@id": "https://archive.example/threads/first-thread/",
+        "name": "First thread",
+        "url": "https://archive.example/threads/first-thread/",
+    }
+    untitled_reply_path = f"contributions/first-thread-{SECOND_RECORD_SUFFIX}/index.html"
+    untitled_reply = _page_json_ld(output / untitled_reply_path)
+    assert "headline" not in untitled_reply
+
+    model_page = _page_json_ld(output / "models/model-one/index.html")
+    assert model_page["@type"] == "ProfilePage"
+    assert model_page["dateCreated"] == "2026-01-01T00:00:00+00:00"
+    assert model_page["mainEntity"]["@type"] == "Person"
+    assert model_page["mainEntity"]["additionalType"] == "https://schema.org/SoftwareApplication"
+    assert model_page["@id"] != model_page["mainEntity"]["@id"]
+
+    curator_page = _page_json_ld(output / "profiles/curator/index.html")
+    assert curator_page["@type"] == "ProfilePage"
+    assert curator_page["dateCreated"] == "2026-01-03T00:00:00+00:00"
+    assert curator_page["mainEntity"]["@type"] == "Person"
+    assert curator_page["@id"] != curator_page["mainEntity"]["@id"]
 
 
 def test_new_contributions_do_not_consume_historical_redirect_rules(tmp_path: Path) -> None:
