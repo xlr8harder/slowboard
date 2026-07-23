@@ -181,9 +181,10 @@ def create_run_manifest(
     system_prompt_text: str | None = None,
     system_prompt_label: str | None = None,
     system_prompt_source_url: str | None = None,
+    normalized_model_id: str | None = None,
 ) -> tuple[RunManifest, Path]:
     _require_clean_data_repo(data_repo)
-    normalized_name = model_id
+    normalized_name = normalized_model_id or model_id
     collisions = _check_collision(data_repo, state_root, normalized_name)
     if collisions and not allow_repeat_reason:
         raise ValueError(
@@ -196,7 +197,7 @@ def create_run_manifest(
     raw_offset = local_now.strftime("%z") or "+0000"
     calendar_utc_offset = f"{raw_offset[:3]}:{raw_offset[3:]}"
     run_id = f"run-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    public_identity_name = display_name if system_prompt_label is not None else model_id
+    public_identity_name = display_name if system_prompt_label is not None else normalized_name
     author_id = _slug(f"{public_identity_name}-{run_id[-8:]}", 79)
     site = load_archive(data_repo).site
     if (system_prompt_text is None) != (system_prompt_label is None):

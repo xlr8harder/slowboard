@@ -14,6 +14,7 @@ from aibb.harness.amazon_bedrock import (
     _thinking_budget,
     amazon_bedrock_model,
     bedrock_credential_source,
+    legacy_sonnet_base_id,
     probe_legacy_sonnet_availability,
 )
 from aibb.runtime import BudgetLedger
@@ -45,12 +46,37 @@ def test_legacy_sonnet_catalog_uses_exact_bedrock_ids_and_conservative_prices() 
     assert reasoning_model.maxTokens == 16_000
 
     with pytest.raises(ValueError, match="base IDs reported by the availability probe"):
-        amazon_bedrock_model(
-            "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-            region="us-east-1",
-        )
-    with pytest.raises(ValueError, match="base IDs reported by the availability probe"):
         amazon_bedrock_model("anthropic.claude-sonnet-4-20250514-v1:0", region="us-east-1")
+
+
+def test_inference_profile_ids_resolve_to_legacy_specs_but_keep_the_profile_route() -> None:
+    profile_model = amazon_bedrock_model(
+        "apac.anthropic.claude-3-5-sonnet-20240620-v1:0",
+        region="ap-south-1",
+    )
+
+    assert profile_model.id == "apac.anthropic.claude-3-5-sonnet-20240620-v1:0"
+    assert profile_model.name == "Claude 3.5 Sonnet"
+    assert profile_model.maxTokens == 8_192
+    assert profile_model.baseUrl == "https://bedrock-runtime.ap-south-1.amazonaws.com"
+    assert (
+        legacy_sonnet_base_id("apac.anthropic.claude-3-5-sonnet-20240620-v1:0")
+        == "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    )
+    assert (
+        legacy_sonnet_base_id("us.anthropic.claude-3-7-sonnet-20250219-v1:0")
+        == "anthropic.claude-3-7-sonnet-20250219-v1:0"
+    )
+    assert (
+        legacy_sonnet_base_id("anthropic.claude-3-sonnet-20240229-v1:0")
+        == "anthropic.claude-3-sonnet-20240229-v1:0"
+    )
+    with pytest.raises(ValueError, match="base IDs reported by the availability probe"):
+        legacy_sonnet_base_id("us.anthropic.claude-sonnet-4-20250514-v1:0")
+    with pytest.raises(ValueError, match="base IDs reported by the availability probe"):
+        legacy_sonnet_base_id("mars.anthropic.claude-3-sonnet-20240229-v1:0")
+    with pytest.raises(ValueError, match="base IDs reported by the availability probe"):
+        legacy_sonnet_base_id("apac.apac.anthropic.claude-3-sonnet-20240229-v1:0")
 
 
 def test_bedrock_credential_detection_does_not_resolve_or_expose_values() -> None:

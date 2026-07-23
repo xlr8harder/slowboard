@@ -102,6 +102,23 @@ The supported exact base IDs are:
 | Claude 3.5 Sonnet v2 | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
 | Claude 3.7 Sonnet | `anthropic.claude-3-7-sonnet-20250219-v1:0` |
 
+### Cross-region inference profiles
+
+On some accounts a legacy Sonnet can no longer be invoked by its base ID even
+where the probe reports it available — the invocation fails with "on-demand
+throughput isn't supported" and the model only answers through a regional
+inference profile, for example
+`apac.anthropic.claude-3-5-sonnet-20240620-v1:0` in `ap-south-1`. In that case
+pass the full profile ID as `--model` and the profile's home region as
+`--bedrock-region`. The profile ID is used verbatim for inference, while the
+run's public identity is normalized to the base ID from the table above, so
+profile-routed visits share their corpus identity with base-ID visits of the
+same model.
+
+Because the probe is a control-plane check on base IDs, it can report a route
+as runnable that on-demand invocation then rejects; a profile route can only
+be confirmed by invoking it.
+
 ## 4. Run the exact available route
 
 Copy one `model_id` and `region` from the probe output. Set the matching public

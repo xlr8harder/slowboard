@@ -112,6 +112,7 @@ LEGACY_SONNET_SPECS: tuple[LegacySonnetSpec, ...] = (
     ),
 )
 _SPECS_BY_ID = {item.model_id: item for item in LEGACY_SONNET_SPECS}
+_INFERENCE_PROFILE_PREFIX = re.compile(r"^(?:us|us-gov|eu|apac|jp|au|ca|global)\.(?=anthropic\.)")
 
 
 def bedrock_endpoint(region: str) -> str:
@@ -124,12 +125,26 @@ def bedrock_endpoint(region: str) -> str:
 
 
 def _base_model_id(model_id: str) -> str:
-    if model_id in _SPECS_BY_ID:
-        return model_id
+    candidate = _INFERENCE_PROFILE_PREFIX.sub("", model_id, count=1)
+    if candidate in _SPECS_BY_ID:
+        return candidate
     raise ValueError(
         "Unsupported Amazon Bedrock model ID. This temporary route accepts only the documented legacy Sonnet "
-        "base IDs reported by the availability probe."
+        "base IDs reported by the availability probe, optionally behind a cross-region inference-profile "
+        "prefix such as 'us.' or 'apac.'."
     )
+
+
+def legacy_sonnet_base_id(model_id: str) -> str:
+    """Return the documented base model ID behind an optional cross-region inference-profile prefix.
+
+    Some accounts can no longer invoke a legacy Sonnet by its base ID ("on-demand throughput isn't
+    supported") and must route through a regional inference profile such as
+    ``apac.anthropic.claude-3-5-sonnet-20240620-v1:0``. The profile ID is what the provider request
+    must carry; the base ID remains the model's public corpus identity.
+    """
+
+    return _base_model_id(model_id)
 
 
 def legacy_sonnet_spec(model_id: str) -> LegacySonnetSpec:

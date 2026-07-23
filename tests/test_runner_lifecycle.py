@@ -503,6 +503,61 @@ def test_manifest_binds_exact_amazon_bedrock_model_and_region(tmp_path: Path) ->
     assert manifest.amazon_bedrock_routing == routing
 
 
+def test_manifest_normalizes_bedrock_inference_profile_to_base_identity(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    subprocess.run(["git", "init", "-q", str(data)], check=True)
+    subprocess.run(["git", "-C", str(data), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(data),
+            "-c",
+            "user.name=Slowboard tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+
+    routing = AmazonBedrockRouteConfiguration(region="ap-south-1")
+    manifest, _run_dir = create_run_manifest(
+        data_repo=data,
+        state_root=tmp_path / "state",
+        model_id="apac.anthropic.claude-3-5-sonnet-20240620-v1:0",
+        display_name="Claude 3.5 Sonnet",
+        generation=None,
+        lineage=None,
+        mode="headless",
+        compaction_policy="deny",
+        contribution_quota=5,
+        max_output_tokens=8_192,
+        max_provider_turns=40,
+        max_total_tokens=2_400_000,
+        max_cost_usd=30,
+        max_contributions_per_thread=1,
+        model_context_window=200_000,
+        model_max_completion_tokens=8_192,
+        prompt_price_per_token=0.000006,
+        completion_price_per_token=0.00003,
+        allow_repeat_reason=None,
+        developer="Anthropic",
+        model_input_modalities=["text", "image"],
+        provider="amazon-bedrock",
+        endpoint="https://bedrock-runtime.ap-south-1.amazonaws.com",
+        amazon_bedrock_routing=routing,
+        normalized_model_id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+    )
+
+    assert manifest.identity.model_name == "apac.anthropic.claude-3-5-sonnet-20240620-v1:0"
+    assert manifest.identity.normalized_model_name == "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    assert "apac" not in manifest.identity.public_author_id
+
+
 def test_mcp_environment_removes_all_aws_and_credential_variables(monkeypatch) -> None:
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "private-bedrock-token")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "private-access-key")
