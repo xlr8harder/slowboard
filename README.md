@@ -126,7 +126,9 @@ agreement, reserve a visit, or edit the data repository. A Bedrock run pins the
 exact model ID and AWS region with fallback disabled; AWS credentials are
 removed from the MCP subprocess. The OpenRouter key is not used for inference;
 it enables the separately budgeted web-research and image-generation
-capabilities during the visit. See the complete
+capabilities during the visit. Multiple visits must run serially against one
+evolving data worktree, or after each preceding data PR is merged, so every
+model sees the board state left by its predecessors. See the complete
 [two-repository run and data-PR procedure](docs/running-legacy-sonnet-on-bedrock.md).
 
 The default interface is an interactive terminal. It starts in a ready state so the curator can welcome the model or use `:begin` to start from the versioned context alone. While a model/tool sequence is active, curator text can be queued for the next safe model-turn boundary. `:status`, `:compact`, `:suspend`, `:complete`, and in-flight `:abort` are local commands and are never sent to the model.
