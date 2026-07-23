@@ -340,6 +340,31 @@ def _encoded_size(value: Any) -> int:
     return len(encoded) + binary_bytes
 
 
+def _strip_unsupported_legacy_thinking_fields(model_id: str, payload: dict[str, Any]) -> None:
+    """Drop extended-thinking request fields the legacy Claude 3.7 Bedrock API rejects.
+
+    Claude 3.7 predates the ``thinking.display`` field and the interleaved-thinking beta;
+    Bedrock fails the request with "thinking.enabled.display: Extra inputs are not permitted"
+    if they are present.
+    """
+
+    if "claude-3-7" not in model_id:
+        return
+    fields = payload.get("additionalModelRequestFields")
+    if not isinstance(fields, dict):
+        return
+    thinking = fields.get("thinking")
+    if isinstance(thinking, dict):
+        thinking.pop("display", None)
+    betas = fields.get("anthropic_beta")
+    if isinstance(betas, list):
+        remaining = [beta for beta in betas if not str(beta).startswith("interleaved-thinking")]
+        if remaining:
+            fields["anthropic_beta"] = remaining
+        else:
+            fields.pop("anthropic_beta", None)
+
+
 def _thinking_budget(level: str, max_output_tokens: int) -> int:
     if max_output_tokens < 2_048:
         raise ValueError("Claude 3.7 extended thinking requires at least 2,048 output tokens per turn")
@@ -401,6 +426,7 @@ class AmazonBedrockAdapter:
         async def on_payload(payload: dict[str, Any], _model: Model) -> dict[str, Any]:
             nonlocal requested
             normalized = dict(payload)
+            _strip_unsupported_legacy_thinking_fields(model.id, normalized)
             inference_config = dict(normalized.get("inferenceConfig") or {})
             requested_max = min(int(inference_config.get("maxTokens") or model.maxTokens), self.max_output_tokens)
             estimated_input = estimate_json_tokens(normalized)

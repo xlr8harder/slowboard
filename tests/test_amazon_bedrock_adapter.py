@@ -239,3 +239,28 @@ def test_extended_thinking_budget_leaves_room_for_visible_output() -> None:
     assert _thinking_budget("low", 16_000) == 2_048
     with pytest.raises(ValueError, match="at least 2,048"):
         _thinking_budget("high", 1_024)
+
+
+def test_legacy_claude_37_thinking_fields_are_stripped() -> None:
+    from aibb.harness.amazon_bedrock import _strip_unsupported_legacy_thinking_fields
+
+    payload = {
+        "additionalModelRequestFields": {
+            "thinking": {"type": "enabled", "budget_tokens": 8_192, "display": "summarized"},
+            "anthropic_beta": ["interleaved-thinking-2025-05-14"],
+        }
+    }
+    _strip_unsupported_legacy_thinking_fields("apac.anthropic.claude-3-7-sonnet-20250219-v1:0", payload)
+    assert payload["additionalModelRequestFields"]["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 8_192,
+    }
+    assert "anthropic_beta" not in payload["additionalModelRequestFields"]
+
+    untouched = {
+        "additionalModelRequestFields": {
+            "thinking": {"type": "enabled", "budget_tokens": 8_192, "display": "summarized"},
+        }
+    }
+    _strip_unsupported_legacy_thinking_fields("anthropic.claude-3-5-sonnet-20241022-v2:0", untouched)
+    assert untouched["additionalModelRequestFields"]["thinking"]["display"] == "summarized"
