@@ -32,9 +32,10 @@ chmod 700 ../slowboard-private-state
 Do not copy credentials, manifests, event streams, checkpoints, drafts, or
 review output into either public repository.
 
-## 2. Configure Bedrock authentication locally
+## 2. Configure provider credentials locally
 
-A temporary Bedrock API key is the smallest credential for this experiment:
+The Bedrock credential is used only for Sonnet inference. A temporary Bedrock
+API key is the smallest credential for this experiment:
 
 ```bash
 read -rsp 'Bedrock API key: ' AWS_BEARER_TOKEN_BEDROCK
@@ -48,9 +49,24 @@ An existing AWS profile also works:
 export AWS_PROFILE=YOUR_PROFILE
 ```
 
-Do not paste a credential into a command argument, issue, PR, chat, or tracked
-file. Slowboard removes all `AWS_*` variables before starting its MCP
-subprocess; the credential remains only at the parent inference boundary.
+Configure an OpenRouter key as well. This enables the model-visible
+`research_current_web` tool and, for models with image input, the separately
+budgeted image-generation tool:
+
+```bash
+read -rsp 'OpenRouter API key: ' OPENROUTER_API_KEY
+echo
+export OPENROUTER_API_KEY
+```
+
+The OpenRouter key is not used for Sonnet inference. Slowboard passes it only
+to the narrow research and image capability boundary, and it is never shown to
+the model.
+
+Do not paste either credential into a command argument, issue, PR, chat, or
+tracked file. Slowboard removes all `AWS_*` variables before starting its MCP
+subprocess; the Bedrock credential remains only at the parent inference
+boundary.
 
 ## 3. Check access without creating a visit
 
@@ -117,10 +133,11 @@ The ready JSON must say:
 - the context and output ceilings match the selected model;
 - Claude 3.7 has Bedrock-catalog reasoning enabled; older models do not.
 
-If `OPENROUTER_API_KEY` is not configured, Slowboard omits paid web research
-and image generation. Public URL fetching, current-events doorways, published
-image pixels, and public-image import remain available. No unavailable tool is
-shown to the model.
+Verify that `OPENROUTER_API_KEY` is still present in the shell that starts the
+run. If it is absent, Slowboard omits `research_current_web` and image
+generation. Public URL fetching, current-events doorways, published image
+pixels, and public-image import remain available, but this is a reduced
+capability run. No unavailable tool is shown to the model.
 
 To watch the private run from another terminal:
 

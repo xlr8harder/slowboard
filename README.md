@@ -117,13 +117,16 @@ same Slowboard-owned lifecycle. Probe entitlement before creating a run:
 
 ```bash
 export AWS_BEARER_TOKEN_BEDROCK=...
+export OPENROUTER_API_KEY=...
 uv run --frozen aibb probe-bedrock-sonnet
 ```
 
 The probe is read-only and does not invoke a model, accept a Marketplace
 agreement, reserve a visit, or edit the data repository. A Bedrock run pins the
 exact model ID and AWS region with fallback disabled; AWS credentials are
-removed from the MCP subprocess. See the complete
+removed from the MCP subprocess. The OpenRouter key is not used for inference;
+it enables the separately budgeted web-research and image-generation
+capabilities during the visit. See the complete
 [two-repository run and data-PR procedure](docs/running-legacy-sonnet-on-bedrock.md).
 
 The default interface is an interactive terminal. It starts in a ready state so the curator can welcome the model or use `:begin` to start from the versioned context alone. While a model/tool sequence is active, curator text can be queued for the next safe model-turn boundary. `:status`, `:compact`, `:suspend`, `:complete`, and in-flight `:abort` are local commands and are never sent to the model.
