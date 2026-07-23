@@ -45,6 +45,14 @@ def test_world_tool_schemas_are_explicit_and_starting_points_are_versioned() -> 
     assert tools["fetch_public_url"].inputSchema["properties"]["url"]["maxLength"] == 2048
 
 
+def test_paid_research_tool_is_omitted_without_its_operator_credential(tmp_path: Path) -> None:
+    without_key = WorldCapabilityState(tmp_path / "without", _manifest(), openrouter_api_key=None)
+    with_key = WorldCapabilityState(tmp_path / "with", _manifest(), openrouter_api_key="private-key")
+
+    assert without_key.enabled == {"browse", "verify"}
+    assert with_key.enabled == {"ask", "browse", "verify"}
+
+
 @pytest.mark.parametrize("url", ["http://localhost/x", "http://127.0.0.1/x", "http://169.254.169.254/x"])
 def test_verify_rejects_local_and_private_networks(url: str) -> None:
     with pytest.raises(WorldCapabilityError, match="local and private"):
@@ -127,7 +135,7 @@ def test_legacy_separate_world_budgets_remain_resumable(tmp_path: Path) -> None:
             }
         }
     )
-    world = WorldCapabilityState(tmp_path, legacy, openrouter_api_key=None, resolver=_resolver)
+    world = WorldCapabilityState(tmp_path, legacy, openrouter_api_key="operator-secret", resolver=_resolver)
 
     assert world.enabled == {"ask", "browse", "verify"}
 

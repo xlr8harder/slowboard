@@ -15,6 +15,14 @@ from aibb import __version__
 from aibb.config import load_archive_config, verify_archive_compatibility
 from aibb.curator import CuratorContributionError, create_curator_reply
 from aibb.domain import load_archive
+from aibb.harness.amazon_bedrock import (
+    BEDROCK_CONTEXT_WINDOW,
+    amazon_bedrock_model,
+    bedrock_credential_source,
+    bedrock_endpoint,
+    create_bedrock_control_client,
+    probe_legacy_sonnet_availability,
+)
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_image_model, fetch_openrouter_model
 from aibb.harness.context_preview import canonical_run_context, render_run_context
@@ -27,7 +35,12 @@ from aibb.harness.runner import create_run_manifest, run_model_visit
 from aibb.harness.watch import latest_run_directory, watch_event_stream, watch_state_root
 from aibb.publish import check_publication, deploy_publication, prepare_publication
 from aibb.runtime import BudgetLedger, RunManifest
-from aibb.runtime.models import BudgetLimits, OpenRouterRoutingConfiguration, ReasoningConfiguration
+from aibb.runtime.models import (
+    AmazonBedrockRouteConfiguration,
+    BudgetLimits,
+    OpenRouterRoutingConfiguration,
+    ReasoningConfiguration,
+)
 from aibb.sessions import SessionStore
 from aibb.site import build_site
 from aibb.starter import initialize_data_repo
@@ -54,6 +67,39 @@ def _resolve_image_policy(policy: Literal["auto", "enable", "disable"], image_in
             "--images enable requires catalog-advertised image input or an explicit --image-input allow override"
         )
     return image_input_supported and policy != "disable"
+
+
+@app.command("probe-bedrock-sonnet")
+def probe_bedrock_sonnet(
+    region: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--region",
+            help="Check only this AWS region; repeat to check several. Omit to check the documented legacy regions.",
+        ),
+    ] = None,
+) -> None:
+    """Read legacy Sonnet entitlement without invoking a model or creating a visit."""
+
+    environment = dict(os.environ)
+    credential_source = bedrock_credential_source(environment)
+    if credential_source is None:
+        raise typer.BadParameter(
+            "Configure AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, or another supported AWS role credential first"
+        )
+    bearer_token = environment.get("AWS_BEARER_TOKEN_BEDROCK")
+    profile = environment.get("AWS_PROFILE")
+    result = probe_legacy_sonnet_availability(
+        regions=region,
+        client_factory=lambda selected_region: create_bedrock_control_client(
+            selected_region,
+            bearer_token=bearer_token,
+            profile=profile,
+        ),
+    )
+    result["credential_source"] = credential_source
+    result["status"] = "available" if result["runnable"] else "none_available"
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @curator_app.command("reply")
@@ -460,9 +506,16 @@ def run_model(
         ),
     ] = Path("../aibb-state"),
     provider: Annotated[
-        Literal["openrouter", "anthropic", "google_agent_platform"],
+        Literal["openrouter", "anthropic", "amazon-bedrock", "google_agent_platform"],
         typer.Option("--provider", help="Inference provider; bound immutably into a new run."),
     ] = "openrouter",
+    bedrock_region: Annotated[
+        str | None,
+        typer.Option(
+            "--bedrock-region",
+            help="AWS region bound into a new Amazon Bedrock run; otherwise uses AWS_REGION/AWS_DEFAULT_REGION.",
+        ),
+    ] = None,
     openrouter_provider: Annotated[
         str | None,
         typer.Option(
@@ -620,6 +673,8 @@ def run_model(
     if resume_run:
         if openrouter_provider is not None:
             raise typer.BadParameter("A resumed run uses its persisted provider route; omit --openrouter-provider")
+        if bedrock_region is not None:
+            raise typer.BadParameter("A resumed run uses its persisted AWS region; omit --bedrock-region")
         if system_prompt_file or system_prompt_label or system_prompt_source_url:
             raise typer.BadParameter("A resumed run uses its persisted system prompt; do not supply prompt options")
         run_dir = state_root / resume_run
@@ -629,21 +684,30 @@ def run_model(
         if resumed.archive_base_url != site.base_url:
             raise typer.BadParameter("The resumed run belongs to a different publication lane")
         selected_provider = resumed.identity.provider
-        if selected_provider not in {"openrouter", "anthropic", "google_agent_platform"}:
+        if selected_provider not in {"openrouter", "anthropic", "amazon-bedrock", "google_agent_platform"}:
             raise typer.BadParameter(f"Unsupported provider in resumed run: {selected_provider}")
         run_id = resume_run
     else:
         selected_provider = provider
         if openrouter_provider is not None and selected_provider != "openrouter":
             raise typer.BadParameter("--openrouter-provider is only valid with --provider openrouter")
+        if bedrock_region is not None and selected_provider != "amazon-bedrock":
+            raise typer.BadParameter("--bedrock-region is only valid with --provider amazon-bedrock")
 
-    key_name = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google_agent_platform": "GOOGLE_API_KEY",
-    }.get(selected_provider, "OPENROUTER_API_KEY")
-    api_key = os.environ.get(key_name)
-    if not api_key:
-        raise typer.BadParameter(f"{key_name} is not set")
+    if selected_provider == "amazon-bedrock":
+        if bedrock_credential_source(dict(os.environ)) is None:
+            raise typer.BadParameter(
+                "Configure AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, or another supported AWS role credential first"
+            )
+        api_key = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
+    else:
+        key_name = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google_agent_platform": "GOOGLE_API_KEY",
+        }.get(selected_provider, "OPENROUTER_API_KEY")
+        api_key = os.environ.get(key_name)
+        if not api_key:
+            raise typer.BadParameter(f"{key_name} is not set")
     openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
 
     if not resume_run:
@@ -703,6 +767,7 @@ def run_model(
                 if openrouter_provider is not None and endpoint_catalog is not None
                 else None
             )
+            amazon_bedrock_routing_configuration = None
             endpoint = None
         elif selected_provider == "anthropic":
             catalog_model = anthropic_model(model)
@@ -727,7 +792,52 @@ def run_model(
                 raise typer.BadParameter(f"{model} does not support Anthropic extended thinking")
             reasoning_configuration = ReasoningConfiguration(enabled=False, source="unavailable")
             openrouter_routing_configuration = None
+            amazon_bedrock_routing_configuration = None
             endpoint = ANTHROPIC_ENDPOINT
+        elif selected_provider == "amazon-bedrock":
+            selected_region = bedrock_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+            if not selected_region:
+                raise typer.BadParameter(
+                    "Amazon Bedrock requires --bedrock-region, AWS_REGION, or AWS_DEFAULT_REGION"
+                )
+            try:
+                catalog_model = amazon_bedrock_model(model, region=selected_region)
+            except ValueError as error:
+                raise typer.BadParameter(str(error)) from error
+            catalog_context_window = BEDROCK_CONTEXT_WINDOW
+            catalog_max_completion = catalog_model.maxTokens
+            catalog_input_modalities = list(catalog_model.input)
+            catalog_image_input = "image" in catalog_model.input
+            prompt_price = catalog_model.cost.input / 1_000_000
+            completion_price = catalog_model.cost.output / 1_000_000
+            developer = "Anthropic"
+            effective_output_tokens = min(max_output_tokens, catalog_model.maxTokens)
+            average_input_tokens = min(40_000, catalog_context_window // 4)
+            average_output_tokens = min(8_000, effective_output_tokens)
+            estimated_cost = max_provider_turns * (
+                average_input_tokens * prompt_price + average_output_tokens * completion_price
+            )
+            effective_cost_usd = max_cost_usd or round(max(5.0, estimated_cost * 1.5), 2)
+            if catalog_model.reasoning:
+                if reasoning_mode == "mandatory":
+                    raise typer.BadParameter(
+                        f"{model} supports optional Bedrock extended thinking; it is not a mandatory-reasoning route"
+                    )
+                reasoning_enabled = reasoning_mode != "disabled"
+                reasoning_configuration = ReasoningConfiguration(
+                    enabled=reasoning_enabled,
+                    supported_efforts=["low", "medium", "high"],
+                    selected_effort="high" if reasoning_enabled else None,
+                    request_parameter={"level": "high"} if reasoning_enabled else None,
+                    source="bedrock-catalog" if reasoning_enabled else "curator-override",
+                )
+            else:
+                if reasoning_mode not in {"auto", "disabled"}:
+                    raise typer.BadParameter(f"{model} does not support Bedrock extended thinking")
+                reasoning_configuration = ReasoningConfiguration(enabled=False, source="unavailable")
+            openrouter_routing_configuration = None
+            amazon_bedrock_routing_configuration = AmazonBedrockRouteConfiguration(region=selected_region)
+            endpoint = bedrock_endpoint(selected_region)
         else:
             if model != GROK_4_1_FAST_REASONING:
                 raise typer.BadParameter(
@@ -758,15 +868,21 @@ def run_model(
                 source="provider-default" if reasoning_mode == "auto" else "curator-override",
             )
             openrouter_routing_configuration = None
+            amazon_bedrock_routing_configuration = None
 
         image_input_supported = catalog_image_input if image_input == "auto" else image_input == "allow"
         image_capabilities_enabled = _resolve_image_policy(images, image_input_supported)
-        if image_capabilities_enabled and image_generation_model and max_generated_images:
+        effective_generated_images = max_generated_images
+        if image_capabilities_enabled and image_generation_model and effective_generated_images:
             if not openrouter_api_key:
-                raise typer.BadParameter(
-                    "OPENROUTER_API_KEY is required when the OpenRouter image-generation capability is enabled"
+                effective_generated_images = 0
+                typer.echo(
+                    "OPENROUTER_API_KEY is not set; visual archive access and public-image import remain enabled, "
+                    "but generate_image is omitted.",
+                    err=True,
                 )
-            asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=openrouter_api_key))
+            else:
+                asyncio.run(fetch_openrouter_image_model(image_generation_model, api_key=openrouter_api_key))
         effective_total_tokens = max_total_tokens or max(250_000, max_provider_turns * 60_000)
         manifest, run_dir = create_run_manifest(
             data_repo=data_repo,
@@ -792,12 +908,15 @@ def run_model(
             model_input_modalities=catalog_input_modalities,
             reasoning=reasoning_configuration,
             openrouter_routing=openrouter_routing_configuration,
+            amazon_bedrock_routing=amazon_bedrock_routing_configuration,
             tool_choice=tool_choice,
             image_input_supported=image_input_supported,
             image_input_source="catalog" if image_input == "auto" else "curator-override",
             image_capabilities_enabled=image_capabilities_enabled,
-            image_generation_model=image_generation_model if image_capabilities_enabled else None,
-            max_generated_images=max_generated_images if image_capabilities_enabled else 0,
+            image_generation_model=(
+                image_generation_model if image_capabilities_enabled and effective_generated_images else None
+            ),
+            max_generated_images=effective_generated_images if image_capabilities_enabled else 0,
             max_imported_images=max_imported_images if image_capabilities_enabled else 0,
             max_image_cost_usd=max_image_cost_usd,
             max_web_calls=max_web_calls,
@@ -824,12 +943,19 @@ def run_model(
                     "image_input_supported": image_input_supported,
                     "image_input_source": "catalog" if image_input == "auto" else "curator-override",
                     "image_capabilities_enabled": image_capabilities_enabled,
-                    "image_generation_model": image_generation_model if image_capabilities_enabled else None,
+                    "image_generation_model": (
+                        image_generation_model if image_capabilities_enabled and effective_generated_images else None
+                    ),
                     "developer": developer,
                     "reasoning": reasoning_configuration.model_dump(mode="json"),
                     "openrouter_routing": (
                         openrouter_routing_configuration.model_dump(mode="json")
                         if openrouter_routing_configuration is not None
+                        else None
+                    ),
+                    "amazon_bedrock_routing": (
+                        amazon_bedrock_routing_configuration.model_dump(mode="json")
+                        if amazon_bedrock_routing_configuration is not None
                         else None
                     ),
                     "tool_choice": tool_choice,

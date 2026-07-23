@@ -757,7 +757,11 @@ def create_server(
                         else (
                             "Google model card plus live route probe at run creation"
                             if identity.provider == "google_agent_platform"
-                            else "version-pinned Harn provider catalog at run creation"
+                            else (
+                                "Slowboard versioned Amazon Bedrock legacy-model catalog at run creation"
+                                if identity.provider == "amazon-bedrock"
+                                else "version-pinned Harn provider catalog at run creation"
+                            )
                         )
                     ),
                     "context_window_tokens": state.manifest.model_context_window,
@@ -777,11 +781,20 @@ def create_server(
                         "quantization_reported_by_openrouter": state.manifest.openrouter_routing.quantization,
                     }
                     if state.manifest.openrouter_routing is not None
-                    else {
-                        "provider_slug": None,
-                        "fallbacks_allowed": True,
-                        "note": "No specific inference backend was pinned for this visit.",
-                    }
+                    else (
+                        {
+                            "aws_region": state.manifest.amazon_bedrock_routing.region,
+                            "exact_model_id": identity.model_name,
+                            "fallbacks_allowed": state.manifest.amazon_bedrock_routing.allow_fallbacks,
+                            "note": "The Amazon Bedrock model ID and AWS region are immutable for this visit.",
+                        }
+                        if state.manifest.amazon_bedrock_routing is not None
+                        else {
+                            "provider_slug": None,
+                            "fallbacks_allowed": True,
+                            "note": "No specific inference backend was pinned for this visit.",
+                        }
+                    )
                 ),
                 "headless_continuation": {
                     "version": state.manifest.headless_continuation_version,
@@ -951,7 +964,20 @@ def main() -> None:
     openrouter_api_key = os.environ.pop("SLOWBOARD_OPENROUTER_API_KEY", None)
     for name in list(os.environ):
         upper = name.upper()
-        if any(marker in upper for marker in ("API_KEY", "ACCESS_TOKEN", "AUTH_TOKEN", "PASSWORD", "SECRET")):
+        if upper.startswith("AWS_") or any(
+            marker in upper
+            for marker in (
+                "API_KEY",
+                "ACCESS_KEY",
+                "ACCESS_TOKEN",
+                "AUTH_TOKEN",
+                "BEARER_TOKEN",
+                "PASSWORD",
+                "SECRET",
+                "SESSION_TOKEN",
+                "WEB_IDENTITY_TOKEN",
+            )
+        ):
             os.environ.pop(name, None)
     try:
         anyio.run(

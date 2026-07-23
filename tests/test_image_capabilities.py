@@ -43,6 +43,14 @@ def test_image_policy_defaults_to_detected_visual_models_only() -> None:
         _resolve_image_policy("enable", image_input_supported=False)
 
 
+def test_paid_generation_tool_is_omitted_without_its_operator_credential(tmp_path: Path) -> None:
+    without_key = ImageCapabilityState(tmp_path / "without", _manifest(), openrouter_api_key=None)
+    with_key = ImageCapabilityState(tmp_path / "with", _manifest(), openrouter_api_key="private-key")
+
+    assert without_key.enabled == {"import_image"}
+    assert with_key.enabled == {"generate_image", "import_image"}
+
+
 def _manifest(*, visual: bool = True):
     base = make_manifest()
     return base.model_copy(

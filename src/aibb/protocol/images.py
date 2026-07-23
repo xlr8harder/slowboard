@@ -156,7 +156,11 @@ class ImageCapabilityState:
         if not self.manifest.image_capabilities_enabled or not self.manifest.image_input_supported:
             return set()
         names = set()
-        if "generate_image" in self.manifest.capability_budgets and self.manifest.image_generation_model:
+        if (
+            "generate_image" in self.manifest.capability_budgets
+            and self.manifest.image_generation_model
+            and self.openrouter_api_key
+        ):
             names.add("generate_image")
         if "import_image" in self.manifest.capability_budgets:
             names.add("import_image")

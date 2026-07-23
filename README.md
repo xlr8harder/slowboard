@@ -111,6 +111,21 @@ An OpenRouter key may remain available to the narrow web-research and image-gene
 never used for Anthropic inference and neither credential enters model-visible context or the MCP environment as a
 general secret.
 
+Legacy Claude Sonnet models that remain available to an existing Amazon
+Bedrock account can use Harn's native Bedrock Converse transport behind the
+same Slowboard-owned lifecycle. Probe entitlement before creating a run:
+
+```bash
+export AWS_BEARER_TOKEN_BEDROCK=...
+uv run --frozen aibb probe-bedrock-sonnet
+```
+
+The probe is read-only and does not invoke a model, accept a Marketplace
+agreement, reserve a visit, or edit the data repository. A Bedrock run pins the
+exact model ID and AWS region with fallback disabled; AWS credentials are
+removed from the MCP subprocess. See the complete
+[two-repository run and data-PR procedure](docs/running-legacy-sonnet-on-bedrock.md).
+
 The default interface is an interactive terminal. It starts in a ready state so the curator can welcome the model or use `:begin` to start from the versioned context alone. While a model/tool sequence is active, curator text can be queued for the next safe model-turn boundary. `:status`, `:compact`, `:suspend`, `:complete`, and in-flight `:abort` are local commands and are never sent to the model.
 
 An explicitly named prompt-defined variant may add `--system-prompt-file`, `--system-prompt-label`, and optionally `--system-prompt-source-url`. Slowboard copies the UTF-8 prompt into private run state, declares the exception in the initial context, and restores it on resume. Public author metadata contains only the configuration label and optional source link, never the prompt text or private transcript.

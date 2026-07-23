@@ -20,6 +20,7 @@ from rich.console import Console
 
 from aibb.domain import load_archive
 from aibb.framing import CURRENT_NOTICE_VERSION, CURRENT_ORIENTATION_VERSION, CURRENT_POLICY_VERSION
+from aibb.harness.amazon_bedrock import AmazonBedrockAdapter, amazon_bedrock_model
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, AnthropicAdapter, anthropic_model
 from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_model
 from aibb.harness.compaction import COMPACTION_NOTICE_VERSION, compact_archive_results, estimate_message_tokens
@@ -31,6 +32,7 @@ from aibb.protocol.client import StdioMcpBridge
 from aibb.runtime import BudgetLedger, RunManifest
 from aibb.runtime.headless import HEADLESS_CONTINUATION_MESSAGES
 from aibb.runtime.models import (
+    AmazonBedrockRouteConfiguration,
     BoundModelIdentity,
     BudgetLimits,
     OpenRouterRoutingConfiguration,
@@ -85,7 +87,20 @@ def _clean_mcp_environment() -> dict[str, str]:
     result = {}
     for name, value in os.environ.items():
         upper = name.upper()
-        if any(marker in upper for marker in ("API_KEY", "ACCESS_TOKEN", "AUTH_TOKEN", "PASSWORD", "SECRET")):
+        if upper.startswith("AWS_") or any(
+            marker in upper
+            for marker in (
+                "API_KEY",
+                "ACCESS_KEY",
+                "ACCESS_TOKEN",
+                "AUTH_TOKEN",
+                "BEARER_TOKEN",
+                "PASSWORD",
+                "SECRET",
+                "SESSION_TOKEN",
+                "WEB_IDENTITY_TOKEN",
+            )
+        ):
             continue
         result[name] = value
     return result
@@ -150,6 +165,7 @@ def create_run_manifest(
     model_input_modalities: list[str] | None = None,
     reasoning: Any = None,
     openrouter_routing: OpenRouterRoutingConfiguration | None = None,
+    amazon_bedrock_routing: AmazonBedrockRouteConfiguration | None = None,
     tool_choice: Literal["auto", "required"] = "auto",
     image_input_supported: bool = False,
     image_input_source: Literal["catalog", "curator-override"] = "catalog",
@@ -160,7 +176,7 @@ def create_run_manifest(
     max_image_cost_usd: float = 2.0,
     max_web_calls: int = 40,
     max_web_cost_usd: float = 5.0,
-    provider: Literal["openrouter", "anthropic", "google_agent_platform"] = "openrouter",
+    provider: Literal["openrouter", "anthropic", "amazon-bedrock", "google_agent_platform"] = "openrouter",
     endpoint: str | None = None,
     system_prompt_text: str | None = None,
     system_prompt_label: str | None = None,
@@ -236,6 +252,7 @@ def create_run_manifest(
         model_input_modalities=model_input_modalities or ["text"],
         reasoning=reasoning or {},
         openrouter_routing=openrouter_routing,
+        amazon_bedrock_routing=amazon_bedrock_routing,
         system_prompt=system_prompt,
         tool_choice=tool_choice,
         image_input_supported=image_input_supported,
@@ -442,7 +459,7 @@ async def run_model_visit(
     *,
     data_repo: Path,
     run_dir: Path,
-    api_key: str,
+    api_key: str | None,
     openrouter_api_key: str | None = None,
     opening: str | None,
     once: bool,
@@ -454,6 +471,8 @@ async def run_model_visit(
     store = SessionStore(run_dir / "session", manifest.run_id)
     ledger = BudgetLedger(run_dir / "mcp/budgets.json", manifest)
     if manifest.identity.provider == "openrouter":
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY is not set")
         catalog = await fetch_openrouter_model(manifest.identity.model_name)
         endpoint_catalog = (
             await fetch_openrouter_endpoint(
@@ -527,6 +546,8 @@ async def run_model_visit(
             else catalog.model_dump(mode="json")
         )
     elif manifest.identity.provider == "anthropic":
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY is not set")
         model = anthropic_model(manifest.identity.model_name)
         context_window = min(manifest.model_context_window or model.contextWindow, model.contextWindow)
         max_output_tokens = min(manifest.max_output_tokens_per_turn, model.maxTokens, context_window)
@@ -539,7 +560,29 @@ async def run_model_visit(
             tool_choice=manifest.tool_choice,
         )
         catalog_record = model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    elif manifest.identity.provider == "amazon-bedrock":
+        if manifest.amazon_bedrock_routing is None:
+            raise ValueError("Amazon Bedrock run manifest is missing its immutable region")
+        max_output_tokens = manifest.max_output_tokens_per_turn
+        model = amazon_bedrock_model(
+            manifest.identity.model_name,
+            region=manifest.amazon_bedrock_routing.region,
+            max_tokens=max_output_tokens,
+        )
+        adapter = AmazonBedrockAdapter(
+            bearer_token=api_key,
+            region=manifest.amazon_bedrock_routing.region,
+            endpoint=manifest.identity.endpoint,
+            ledger=ledger,
+            session=store,
+            max_output_tokens=max_output_tokens,
+            tool_choice=manifest.tool_choice,
+            reasoning_level=manifest.reasoning.selected_effort if manifest.reasoning.enabled else None,
+        )
+        catalog_record = model.model_dump(mode="json", by_alias=True, exclude_none=True)
     elif manifest.identity.provider == "google_agent_platform":
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is not set")
         max_output_tokens = manifest.max_output_tokens_per_turn
         model = google_agent_platform_model(
             manifest.identity.model_name,

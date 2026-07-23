@@ -51,7 +51,13 @@ class ReasoningConfiguration(BaseModel):
     supported_efforts: list[str] = Field(default_factory=list)
     selected_effort: str | None = None
     request_parameter: dict[str, object] | None = None
-    source: Literal["openrouter-catalog", "provider-default", "curator-override", "unavailable"] = "unavailable"
+    source: Literal[
+        "openrouter-catalog",
+        "bedrock-catalog",
+        "provider-default",
+        "curator-override",
+        "unavailable",
+    ] = "unavailable"
 
 
 class OpenRouterRoutingConfiguration(BaseModel):
@@ -71,6 +77,15 @@ class OpenRouterRoutingConfiguration(BaseModel):
             "allow_fallbacks": self.allow_fallbacks,
             "require_parameters": self.require_parameters,
         }
+
+
+class AmazonBedrockRouteConfiguration(BaseModel):
+    """Immutable AWS region and model route selected for a Bedrock run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    region: str = Field(pattern=r"^[a-z][a-z0-9-]{2,31}$")
+    allow_fallbacks: Literal[False] = False
 
 
 class SystemPromptConfiguration(BaseModel):
@@ -115,6 +130,7 @@ class RunManifest(BaseModel):
     model_input_modalities: list[str] = Field(default_factory=lambda: ["text"])
     reasoning: ReasoningConfiguration = Field(default_factory=ReasoningConfiguration)
     openrouter_routing: OpenRouterRoutingConfiguration | None = None
+    amazon_bedrock_routing: AmazonBedrockRouteConfiguration | None = None
     system_prompt: SystemPromptConfiguration | None = None
     tool_choice: Literal["auto", "required"] = "auto"
     headless_continuation_version: Literal["v0.1", "v0.2", "v0.3"] = "v0.3"
@@ -154,6 +170,10 @@ class RunManifest(BaseModel):
             raise ValueError("compaction soft threshold must be below hard threshold")
         if self.openrouter_routing is not None and self.identity.provider != "openrouter":
             raise ValueError("openrouter_routing is only valid for OpenRouter runs")
+        if self.amazon_bedrock_routing is not None and self.identity.provider != "amazon-bedrock":
+            raise ValueError("amazon_bedrock_routing is only valid for Amazon Bedrock runs")
+        if self.identity.provider == "amazon-bedrock" and self.amazon_bedrock_routing is None:
+            raise ValueError("Amazon Bedrock runs require an immutable region")
         return self
 
     @classmethod

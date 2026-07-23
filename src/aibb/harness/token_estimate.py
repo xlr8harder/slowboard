@@ -22,6 +22,9 @@ def estimate_json_tokens(value: Any) -> int:
             return {key: scrub(nested) for key, nested in item.items()}
         if isinstance(item, list):
             return [scrub(nested) for nested in item]
+        if isinstance(item, bytes):
+            image_count += 1
+            return "[binary image input]"
         if isinstance(item, str) and item.startswith("data:image/") and ";base64," in item:
             image_count += 1
             return "[encoded image input]"

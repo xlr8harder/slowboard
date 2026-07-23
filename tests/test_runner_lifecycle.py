@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +15,7 @@ from aibb.harness.engine import EngineSnapshot
 from aibb.harness.runner import (
     CURRENT_ORIENTATION_VERSION,
     _check_collision,
+    _clean_mcp_environment,
     _headless_continuation_attempts_in_current_segment,
     _headless_resume_requires_continuation,
     _load_system_prompt,
@@ -22,8 +25,55 @@ from aibb.harness.runner import (
     _turn_boundary_outcome,
     create_run_manifest,
 )
-from aibb.runtime import BudgetLedger
+from aibb.runtime import BudgetLedger, RunManifest
+from aibb.runtime.models import AmazonBedrockRouteConfiguration
 from aibb.sessions import SessionStore
+
+
+def test_bedrock_probe_cli_requires_explicit_credentials(monkeypatch) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("AWS_"):
+            monkeypatch.delenv(name, raising=False)
+
+    result = CliRunner().invoke(app, ["probe-bedrock-sonnet", "--region", "us-east-1"])
+
+    assert result.exit_code != 0
+    assert "Configure AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE" in result.output
+
+
+def test_bedrock_probe_cli_never_prints_its_bearer_token(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_probe(*, regions, client_factory):
+        observed["regions"] = regions
+        observed["client_factory"] = client_factory
+        return {
+            "operation": "GetFoundationModelAvailability",
+            "accepted_marketplace_agreement": False,
+            "invoked_model": False,
+            "created_slowboard_visit": False,
+            "models": [],
+            "runnable": [
+                {
+                    "display_name": "Claude 3.5 Sonnet",
+                    "model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+                    "region": "us-east-1",
+                }
+            ],
+        }
+
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "private-bedrock-token")
+    monkeypatch.setattr("aibb.cli.probe_legacy_sonnet_availability", fake_probe)
+
+    result = CliRunner().invoke(app, ["probe-bedrock-sonnet", "--region", "us-east-1"])
+
+    assert result.exit_code == 0, result.output
+    assert observed["regions"] == ["us-east-1"]
+    assert "private-bedrock-token" not in result.output
+    payload = json.loads(result.output)
+    assert payload["credential_source"] == "bedrock-api-key"
+    assert payload["status"] == "available"
+    assert payload["invoked_model"] is False
 
 
 def test_current_orientation_marks_the_inherited_board_as_provisional() -> None:
@@ -396,3 +446,141 @@ def test_manifest_binds_google_agent_platform_route(tmp_path: Path) -> None:
     assert manifest.identity.endpoint == endpoint
     assert manifest.identity.developer == "xAI"
     assert manifest.identity.model_name == "xai/grok-4.1-fast-reasoning"
+
+
+def test_manifest_binds_exact_amazon_bedrock_model_and_region(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_archive(data)
+    subprocess.run(["git", "init", "-q", str(data)], check=True)
+    subprocess.run(["git", "-C", str(data), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(data),
+            "-c",
+            "user.name=Slowboard tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+
+    routing = AmazonBedrockRouteConfiguration(region="us-east-1")
+    manifest, _run_dir = create_run_manifest(
+        data_repo=data,
+        state_root=tmp_path / "state",
+        model_id="anthropic.claude-3-5-sonnet-20240620-v1:0",
+        display_name="Claude 3.5 Sonnet",
+        generation=None,
+        lineage=None,
+        mode="headless",
+        compaction_policy="deny",
+        contribution_quota=5,
+        max_output_tokens=8_192,
+        max_provider_turns=40,
+        max_total_tokens=2_400_000,
+        max_cost_usd=30,
+        max_contributions_per_thread=1,
+        model_context_window=200_000,
+        model_max_completion_tokens=8_192,
+        prompt_price_per_token=0.000006,
+        completion_price_per_token=0.00003,
+        allow_repeat_reason=None,
+        developer="Anthropic",
+        model_input_modalities=["text", "image"],
+        provider="amazon-bedrock",
+        endpoint="https://bedrock-runtime.us-east-1.amazonaws.com",
+        amazon_bedrock_routing=routing,
+    )
+
+    assert manifest.identity.provider == "amazon-bedrock"
+    assert manifest.identity.endpoint == "https://bedrock-runtime.us-east-1.amazonaws.com"
+    assert manifest.identity.model_name == "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    assert manifest.amazon_bedrock_routing == routing
+
+
+def test_mcp_environment_removes_all_aws_and_credential_variables(monkeypatch) -> None:
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "private-bedrock-token")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "private-access-key")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "private-session-token")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("UNRELATED_VISIBLE_SETTING", "safe")
+
+    cleaned = _clean_mcp_environment()
+
+    assert not any(name.startswith("AWS_") for name in cleaned)
+    assert "private-bedrock-token" not in cleaned.values()
+    assert cleaned["UNRELATED_VISIBLE_SETTING"] == "safe"
+
+
+def test_cli_creates_bedrock_run_without_exposing_optional_openrouter_tools(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    data = tmp_path / "data"
+    state = tmp_path / "state"
+    _write_archive(data)
+    subprocess.run(["git", "init", "-q", str(data)], check=True)
+    subprocess.run(["git", "-C", str(data), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(data),
+            "-c",
+            "user.name=Slowboard tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    observed: dict[str, object] = {}
+
+    async def fake_run_model_visit(**kwargs):
+        observed.update(kwargs)
+        return "run-test"
+
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "private-bedrock-token")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr("aibb.cli.run_model_visit", fake_run_model_visit)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--data-repo",
+            str(data),
+            "--state-root",
+            str(state),
+            "--production",
+            "--provider",
+            "amazon-bedrock",
+            "--bedrock-region",
+            "us-east-1",
+            "--model",
+            "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            "--display-name",
+            "Claude 3.5 Sonnet",
+            "--mode",
+            "headless",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    ready = next(json.loads(line) for line in result.output.splitlines() if line.startswith("{"))
+    manifest = RunManifest.load(Path(ready["state"]) / "manifest.json")
+    assert ready["provider"] == "amazon-bedrock"
+    assert ready["amazon_bedrock_routing"] == {"allow_fallbacks": False, "region": "us-east-1"}
+    assert ready["image_capabilities_enabled"] is True
+    assert ready["image_generation_model"] is None
+    assert manifest.amazon_bedrock_routing.region == "us-east-1"
+    assert "generate_image" not in manifest.capability_budgets
+    assert "import_image" in manifest.capability_budgets
+    assert observed["api_key"] == "private-bedrock-token"

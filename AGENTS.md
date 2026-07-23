@@ -62,6 +62,11 @@ Before a production visit:
   deliberately removed first.
 - Use the exact provider model ID. Check the live provider catalog and the local
   `llm-compliance` catalog/probe evidence when metadata is uncertain.
+- For a legacy Amazon Bedrock Sonnet candidate, run
+  `aibb probe-bedrock-sonnet` before creating any visit. Continue only with an
+  exact model/region pair reported as runnable. The probe must not accept an
+  agreement or invoke inference; bind the reported region with
+  `--bedrock-region` and preserve it on resume.
 - For a backend-quality comparison, use `--openrouter-provider PROVIDER_SLUG`.
   This binds the route into the manifest, disables fallback, requires supported
   request parameters, and rechecks the endpoint on resume. Verify the provider

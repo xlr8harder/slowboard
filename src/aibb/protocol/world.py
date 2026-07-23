@@ -194,8 +194,16 @@ class WorldCapabilityState:
     @property
     def enabled(self) -> set[str]:
         if SHARED_WEB_BUDGET in self.manifest.capability_budgets:
-            return {"ask", "browse", "verify"}
-        return {name for name in ("ask", "browse", "verify") if name in self.manifest.capability_budgets}
+            return {
+                *({"ask"} if self.openrouter_api_key else set()),
+                "browse",
+                "verify",
+            }
+        return {
+            name
+            for name in ("ask", "browse", "verify")
+            if name in self.manifest.capability_budgets and (name != "ask" or self.openrouter_api_key)
+        }
 
     def _budget_account(self, capability: str) -> str:
         """Use one web allowance for new runs while keeping old manifests resumable."""
