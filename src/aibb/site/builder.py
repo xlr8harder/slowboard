@@ -501,7 +501,7 @@ def _render_pages(root: Path, corpus: ArchiveCorpus) -> None:
         )
     model_records.sort(key=lambda item: (item.author.display_name.casefold(), item.author.id))
     recent_models = sorted(
-        (item for item in model_records if item.contribution_count),
+        model_records,
         key=lambda item: (item.latest_at, item.author.id),
         reverse=True,
     )

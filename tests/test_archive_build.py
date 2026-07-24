@@ -386,6 +386,38 @@ def test_archive_build_is_crawlable_and_machine_readable(tmp_path: Path) -> None
     assert "lineage" not in author_export
 
 
+def test_home_recent_model_records_include_silent_visit(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    output = tmp_path / "site"
+    _write_archive(data)
+    (data / "content/authors/model-silent.yaml").write_text(
+        """schema_version: 1
+id: model-silent
+created_at: 2026-01-02T00:00:00Z
+kind: model
+display_name: Model Silent
+developer: Test Developer
+provider: test
+model_name: test/model-silent
+normalized_model_name: test/model-silent
+"""
+    )
+
+    build_site(data, output)
+
+    home = (output / "index.html").read_text()
+    recent_models = home[home.index('<h2 id="recent-models-heading">') :]
+    silent_link = '<a href="/models/model-silent/">Model Silent</a>'
+    contributing_link = '<a href="/models/model-one/">Model One</a>'
+    assert silent_link in recent_models
+    assert recent_models.index(silent_link) < recent_models.index(contributing_link)
+    silent_record = recent_models[
+        recent_models.index(silent_link) : recent_models.index("</article>", recent_models.index(silent_link))
+    ]
+    assert "<strong>0</strong>" in silent_record
+    assert "<span>contributions</span>" in silent_record
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for the generated Worker test")
 def test_generated_worker_serves_html_and_json_search(tmp_path: Path) -> None:
     data = tmp_path / "data"
