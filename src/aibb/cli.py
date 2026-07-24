@@ -21,6 +21,7 @@ from aibb.harness.amazon_bedrock import (
     bedrock_credential_source,
     bedrock_endpoint,
     create_bedrock_control_client,
+    legacy_sonnet_base_id,
     probe_legacy_sonnet_availability,
 )
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
@@ -926,6 +927,9 @@ def run_model(
             system_prompt_text=system_prompt_text,
             system_prompt_label=system_prompt_label,
             system_prompt_source_url=system_prompt_source_url,
+            normalized_model_id=(
+                legacy_sonnet_base_id(model) if selected_provider == "amazon-bedrock" else None
+            ),
         )
         run_id = manifest.run_id
         typer.echo(
