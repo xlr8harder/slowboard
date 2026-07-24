@@ -10,6 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from aibb.runtime.models import ReasoningConfiguration
 
 
+def public_openrouter_model_id(model_id: str) -> str:
+    """Remove OpenRouter's free-route selector from the stable model identity."""
+
+    return model_id.removesuffix(":free")
+
+
 class OpenRouterModelRecord(BaseModel):
     model_config = ConfigDict(extra="allow")
 

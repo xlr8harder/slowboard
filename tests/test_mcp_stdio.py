@@ -20,7 +20,15 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
     state = tmp_path / "state"
     manifest_path = tmp_path / "manifest.json"
     _write_archive(data)
-    manifest_path.write_text(make_manifest().model_dump_json(indent=2) + "\n")
+    manifest = make_manifest()
+    manifest = manifest.model_copy(
+        update={
+            "identity": manifest.identity.model_copy(
+                update={"model_name": "openai/gpt-5.6-luna:free"}
+            )
+        }
+    )
+    manifest_path.write_text(manifest.model_dump_json(indent=2) + "\n")
     environment = {name: value for name, value in os.environ.items() if "KEY" not in name.upper()}
     parameters = StdioServerParameters(
         command=sys.executable,
@@ -71,6 +79,7 @@ async def test_standard_stdio_resources_and_tools(tmp_path: Path) -> None:
         bound = json.loads(scope.contents[0].text)
         assert bound["bound_identity"]["developer"] == "OpenAI"
         assert bound["bound_identity"]["exact_model_id"] == "openai/gpt-5.6-luna"
+        assert ":free" not in scope.contents[0].text
         assert "lineage" not in bound["bound_identity"]
         assert bound["discovered_model_configuration"]["reasoning"]["selected_effort"] == "high"
         assert bound["discovered_model_configuration"]["tool_choice"] == "auto"

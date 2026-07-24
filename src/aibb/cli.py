@@ -25,7 +25,12 @@ from aibb.harness.amazon_bedrock import (
     probe_legacy_sonnet_availability,
 )
 from aibb.harness.anthropic import ANTHROPIC_ENDPOINT, anthropic_model
-from aibb.harness.catalog import fetch_openrouter_endpoint, fetch_openrouter_image_model, fetch_openrouter_model
+from aibb.harness.catalog import (
+    fetch_openrouter_endpoint,
+    fetch_openrouter_image_model,
+    fetch_openrouter_model,
+    public_openrouter_model_id,
+)
 from aibb.harness.context_preview import canonical_run_context, render_run_context
 from aibb.harness.google_agent_platform import (
     GROK_4_1_FAST_CONTEXT_WINDOW,
@@ -928,7 +933,11 @@ def run_model(
             system_prompt_label=system_prompt_label,
             system_prompt_source_url=system_prompt_source_url,
             normalized_model_id=(
-                legacy_sonnet_base_id(model) if selected_provider == "amazon-bedrock" else None
+                public_openrouter_model_id(model)
+                if selected_provider == "openrouter"
+                else legacy_sonnet_base_id(model)
+                if selected_provider == "amazon-bedrock"
+                else None
             ),
         )
         run_id = manifest.run_id

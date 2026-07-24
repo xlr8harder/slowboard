@@ -15,7 +15,15 @@ from aibb.runtime.models import SystemPromptConfiguration
 def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
     data = tmp_path / "data"
     _write_archive(data)
-    manifest = make_manifest().model_copy(update={"max_contributions_per_thread": 2})
+    manifest = make_manifest()
+    manifest = manifest.model_copy(
+        update={
+            "max_contributions_per_thread": 2,
+            "identity": manifest.identity.model_copy(
+                update={"model_name": "openai/gpt-5.6-luna:free"}
+            ),
+        }
+    )
     state = ArchiveMcpState(data, tmp_path / "state", manifest)
 
     status = call_operation(state, "archive_status", {})
@@ -65,7 +73,10 @@ def test_read_draft_preview_finish_and_idempotency(tmp_path: Path) -> None:
         f"content/contributions/{receipt['contribution_id']}.md",
     }
     assert load_archive(data).contributions[receipt["contribution_id"]].body.startswith("This extends")
-    assert load_archive(data).authors[state.manifest.identity.public_author_id].developer == "OpenAI"
+    finished_author = load_archive(data).authors[state.manifest.identity.public_author_id]
+    assert finished_author.developer == "OpenAI"
+    assert finished_author.model_name == "openai/gpt-5.6-luna"
+    assert ":free" not in (data / f"content/authors/{finished_author.id}.yaml").read_text()
     local = call_operation(state, "read_contribution", {"contribution_id": receipt["contribution_id"]})
     assert local["publication_state"] == "local_worktree"
     status_after = call_operation(state, "archive_status", {})

@@ -745,7 +745,7 @@ def create_server(
                 "bound_identity": {
                     "developer": identity.developer,
                     "display_name": identity.display_name,
-                    "exact_model_id": identity.model_name,
+                    "exact_model_id": identity.normalized_model_name,
                     "inference_route": identity.provider,
                     "endpoint": identity.endpoint,
                     "public_author_id": identity.public_author_id,

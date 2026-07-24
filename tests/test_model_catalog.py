@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from aibb.harness.catalog import OpenRouterModelRecord, fetch_openrouter_endpoint
+from aibb.harness.catalog import OpenRouterModelRecord, fetch_openrouter_endpoint, public_openrouter_model_id
 
 
 def _record(reasoning: dict[str, object] | None) -> OpenRouterModelRecord:
@@ -68,6 +68,11 @@ def test_missing_provider_context_uses_model_catalog_maximum() -> None:
     record = _record(None)
 
     assert record.effective_context_length == 100_000
+
+
+def test_free_route_selector_is_not_part_of_public_model_identity() -> None:
+    assert public_openrouter_model_id("inclusionai/ling-3.0-flash:free") == "inclusionai/ling-3.0-flash"
+    assert public_openrouter_model_id("inclusionai/ling-3.0-flash") == "inclusionai/ling-3.0-flash"
 
 
 @pytest.mark.asyncio
